@@ -1,4 +1,4 @@
-function [sell_vec, last_sell_i, last_sell_price] = DetermineSell(avg_20_vec, avg_70_vec, sell_strategy, buy_vec)
+function [sell_vec, last_sell_i] = DetermineSell(avg_20_vec, avg_70_vec, sell_strategy, buy_vec)
 %% sell_vec . [ sell(i) = [true if sell] , reason(i) = [string] ]
 % avg_x_vec(:,i) = [close_price ; 1 if uptrend ]
 % strategy 1: uptrend 70 changes to downtrend 70 + downtrend 20 cross uptrend 70
@@ -20,7 +20,7 @@ for i = 2 : len
 
     if ~isnan(uptrend_20) && ~isnan(uptrend_70)
         if sell_strategy >= 1
-            if  (~isnan(avg_70_vec(2,i-1)) && avg_70_vec(2,i-1)) && ~uptrend_70
+            if ~isnan(avg_70_vec(1,i-1)) && avg_70_vec(1,i) <= 0.99 * avg_70_vec(1,i-1)
                 sell_vec.sell(i) = true;
                 sell_vec.reason(i) = "uptrend 70 changes to downtrend 70";
             end

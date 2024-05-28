@@ -1,6 +1,15 @@
-function [max_profit_data, max_profit_str, b_buy_today] = StockCharts(stock_symbol, init_date, b_visible, output_path)
+function [max_profit_data, max_profit_str, b_buy_today, b_sell_today, price_today] = StockCharts(stock_symbol, init_date, b_visible, output_path)
 %% one stock chart as input
+% max_profit_data(:) = [percent, usd, buy_strategy, sell_strategy]
 [data_] = ParseStockData(stock_symbol, init_date);
+
+if isempty(data_)
+    max_profit_data = zeros(1, 4);
+    max_profit_str = "";
+    b_buy_today = false;
+    b_sell_today = false;
+    return;
+end
 
 [date_vec, price_vec, avg_20_vec, avg_70_vec, avg_150_vec] = CalcMovingAvgs(data_);
 [fig_path] = PlotMovingAvgs(stock_symbol, date_vec, price_vec, avg_20_vec, avg_70_vec, avg_150_vec, b_visible, output_path);
@@ -8,9 +17,9 @@ function [max_profit_data, max_profit_str, b_buy_today] = StockCharts(stock_symb
 [avg_20_vec, avg_70_vec, ~] = CalcMovingAvgsData(avg_20_vec, avg_70_vec, avg_150_vec);
 
 %%
-for strategy_ind = 1:2
+for strategy_ind = 1
     [buy_vec, last_buy_i] = DetermineBuy(avg_20_vec, avg_70_vec, strategy_ind);
-    [sell_vec, last_sell_i] = DetermineSell(avg_20_vec, avg_70_vec, strategy_ind, buy_vec);
+    [sell_vec, last_sell_i] = DetermineSell(avg_20_vec, avg_70_vec, 2, buy_vec);
 
     % if there are no sell points after last buy point, add a sell point at last
     if last_buy_i ~= 0 && last_sell_i < last_buy_i
@@ -19,18 +28,18 @@ for strategy_ind = 1:2
     end
 
     buy_struct(strategy_ind).buy_vec = buy_vec; %#ok
-    sell_struct(strategy_ind).sell_vec = sell_vec; %#ok
+    sell_struct(2).sell_vec = sell_vec;
 end
 
 save_path = fullfile(output_path, 'Detailed', stock_symbol);
 if isfolder(save_path), rmdir(save_path, 's'), end
 mkdir(save_path);
-diary(fullfile(save_path, [char(stock_symbol), '.log']));
+diary(char(fullfile(save_path, [char(stock_symbol), '.log'])));
 
 max_profit_data = -101 .* ones(1, 4); % [percent, usd, buy_strategy, sell_strategy]
 max_profit_str = "";
-for buy_strategy = 1%:2
-    for sell_strategy = 1%:2
+for buy_strategy = 1 % 1:2
+    for sell_strategy = 2 % 1:2
         fig = open([char(fig_path), '.fig']);
         output_name = [num2str(buy_strategy), '_', num2str(sell_strategy)];
 
@@ -69,12 +78,19 @@ delete([char(fig_path), '.fig']);
 
 %% buy_vec . [ buy(i) = [true if buy] , reason(i) = [string] ]
 b_buy_today = false;
+b_sell_today = false;
 if ~isempty(who('max_profit_fig'))
     max_profit_buy_vec = buy_struct(max_profit_data(3)).buy_vec;
+    max_profit_sell_vec = sell_struct(max_profit_data(4)).sell_vec;
     if max_profit_buy_vec.buy(end)
         b_buy_today = true;
     end
+    if max_profit_sell_vec.sell(end) && max_profit_sell_vec.reason(end) ~= "no sell points"
+        b_sell_today = true;
+    end
 end
+
+price_today = price_vec(end);
 
 close all;
 

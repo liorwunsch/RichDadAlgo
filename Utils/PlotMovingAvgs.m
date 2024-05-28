@@ -12,8 +12,8 @@ legend(gca, 'show', 'Location', 'NW', 'Interpreter', 'none', 'Color', 'none', 'T
 title([stock_symbol, ' (1D)']);
 xlabel('Date');
 ylabel('Price');
-xlim('tight');
-ylim('tickaligned');
+xlim('auto');
+ylim('auto');
 
 plot(date_vec, price_vec, 'DisplayName', 'Value', 'Color', [0 0.447 0.741], 'LineWidth', 1);
 plot(date_vec, avg_20_vec, 'DisplayName', 'MA 20', 'Color', [0.85 0.325 0.098], 'LineWidth', 1);

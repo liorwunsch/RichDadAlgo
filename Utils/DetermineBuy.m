@@ -20,7 +20,7 @@ for i = 2 : len
 
     if ~isnan(uptrend_20) && ~isnan(uptrend_70)
         if buy_strategy >= 1
-            if uptrend_20 && uptrend_70 && (prev_20 <= prev_70 && curr_20 > curr_70)
+            if uptrend_20 && uptrend_70 && (~isnan(avg_70_vec(2,i-1)) && avg_70_vec(2,i-1)) && (prev_20 <= prev_70 && curr_20 > curr_70)
                 buy_vec.buy(i) = true;
                 buy_vec.reason(i) = "uptrend 20 cross uptrend 70";
             end

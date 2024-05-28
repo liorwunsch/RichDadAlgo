@@ -5,6 +5,8 @@ stock_symbol = char(stock_symbol);
 
 [data_] = getMarketDataViaYahoo(stock_symbol, init_date);
 
-data_ = table2struct(data_);
+if ~isempty(data_)
+    data_ = table2struct(data_);
+end
 
 end
