@@ -1,5 +1,7 @@
-QQQ   ; 459.03
-QTWO  ; 62.59
-NVDA  ; 1043.95
-MSFT  ; 427.18
-GOOGL ; 164
+// Stock ; Buy Price ; Buy Date (Pre-Market)
+QQQ   ; 459.03 ; 28-May-2024
+QTWO  ; 62.59  ; 28-May-2024
+NVDA  ; 1087.1 ; 29-May-2024
+MSFT  ; 427.18 ; 24-May-2024
+GOOGL ; 164    ; 13-May-2024
+IVV   ; 528.26 ; 29-May-2024

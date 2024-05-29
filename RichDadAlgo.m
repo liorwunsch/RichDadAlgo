@@ -8,15 +8,16 @@ mkdir(output_path);
 %% stocks_data(i) . [ stock_symbol , profit_perc , profit_val , profit_data = [buy_strategy, sell_strategy] , profit_str , b_buy_today]
 [stock_symbols] = ParseStockList(fullfile(input_path, 'stocks.txt'));
 
-len = length(stock_symbols);
-stocks_data(1, len) = struct;
-
-if len == 0
+if isempty(stock_symbols)
     return;
 end
 
+%%
 today = datetime('now', 'Format', 'dd-MM-yyyy');
 init_date = today - days_num;
+
+len = length(stock_symbols);
+stocks_data(1, len) = struct;
 
 for i = 1 : len
     stock_symbol = stock_symbols(i);
@@ -38,61 +39,14 @@ end
 [~, idx] = sort(profit_percs, 'descend');
 stocks_data = stocks_data(idx);
 
-max_profit_log_path = fullfile(output_path, 'max_profit.log');
-fid = fopen(max_profit_log_path, 'wt');
-for i = 1 : len
-    fprintf(fid, newline);
-    fprintf(fid, '%s', string(stocks_data(i).profit_str));
-end
-fclose(fid);
+save(fullfile(output_path, 'stocks_data.mat'), 'stocks_data', '-v7.3');
 
+%%
+% output_path = 'Output';
 % load(fullfile(output_path, 'stocks_data.mat'), 'stocks_data');
 
-str = [newline, 'Stocks (', char(init_date), ' to ', char(today), ')'];
-for i = 1 : len
-    str = [str, newline, num2str(i), '. ']; %#ok
-    if i < 10
-        str = [str, ' ']; %#ok
-    end
-    str = [str, char(stocks_data(i).stock_symbol), ' ']; %#ok
-    str = [str, char(9), '(', num2str(stocks_data(i).profit_perc, '%.2f'), '%) ']; %#ok
-end
-disp(str);
-
-%%
-str = [newline, 'Buy Today: ', newline];
-for i = 1 : len
-    if stocks_data(i).b_buy_today
-        if stocks_data(i).profit_perc > 1
-            str = [str, char(stocks_data(i).stock_symbol), ', ']; %#ok
-        end
-    end
-end
-str = [str(1:end-2), newline];
-disp(str);
-
-%%
-stock_symbols = [stocks_data.stock_symbol]';
-[active_stock_symbols, active_stock_buy_prices] = ParseStockList(fullfile(input_path, 'stocks_active.txt'));
-str = newline;
-for i = 1 : length(active_stock_symbols)
-    k = find(stock_symbols == active_stock_symbols(i), 1);
-    if isempty(k)
-        warning([char(active_stock_symbols(i)), ' not found in data']);
-        continue;
-    end
-    str = [str, char(stocks_data(k).stock_symbol)]; %#ok
-    str = [str, ', ', char(9), 'bought at ', num2str(active_stock_buy_prices(i), '%.2f'), '$']; %#ok
-    str = [str, ', ', char(9), 'now at ', num2str(stocks_data(k).price_today, '%.2f'), '$']; %#ok
-    str = [str, ', ', char(9), 'profit = ', num2str(100 * stocks_data(k).price_today / active_stock_buy_prices(i), '%.2f'), '%']; %#ok
-    if stocks_data(k).b_sell_today
-        str = [str, ' !! SELL TODAY !!']; %#ok
-    end
-    str = [str, newline]; %#ok
-end
-disp(str);
-
-%%
-save(fullfile(output_path, 'stocks_data.mat'), 'stocks_data', '-v7.3');
+PrintStockProfits(output_path, init_date, today, stocks_data)
+PrintBuyTodayAlerts(stocks_data);
+PrintActiveStocksData(input_path, stocks_data);
 
 end
