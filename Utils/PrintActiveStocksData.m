@@ -19,7 +19,7 @@ for i = 1 : length(active_stock_symbols)
     str = [str, char(stocks_data(k).stock_symbol)]; %#ok
     str = [str, ', ', char(9), 'bought at ', num2str(active_stock_buy_prices(i), '%.2f'), '$']; %#ok
     str = [str, ', ', char(9), 'now at ', num2str(stocks_data(k).price_today, '%.2f'), '$']; %#ok
-    str = [str, ', ', char(9), 'profit = ', num2str(100 * stocks_data(k).price_today / active_stock_buy_prices(i), '%.2f'), '%']; %#ok
+    str = [str, ',  ', char(9), 'profit = ', num2str(100 * (stocks_data(k).price_today - active_stock_buy_prices(i)) / active_stock_buy_prices(i), '%.2f'), '%']; %#ok
     
     if stocks_data(k).b_sell_today
         str = [str, ' !! SELL TODAY !!']; %#ok
