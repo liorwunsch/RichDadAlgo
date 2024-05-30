@@ -36,6 +36,10 @@ for i = 2 : len
                 sell_vec.reason(i) = "uptrend 20 cross uptrend 70 (1) days after";
             end
         end
+        
+        if sell_strategy >= 3
+           % TODO - add sell point where stock value drops 5% less than highest value after buy 
+        end
 
         if sell_vec.sell(i)
             last_sell_i = i;
