@@ -5,6 +5,9 @@ import datetime  # Importing datetime for handling dates
 from datetime import timedelta  # Importing timedelta for date arithmetic
 from pandas_datareader import data as pdr  # Importing pandas_datareader for fetching stock data from Yahoo Finance
 import time  # Importing time for time-related operations
+from openpyxl.utils import get_column_letter
+from openpyxl import Workbook
+from openpyxl.worksheet.table import Table, TableStyleInfo
 
 def screener(stocklist, date_study):
     # Initialize exportList DataFrame to store stock data that meets the criteria
@@ -29,8 +32,7 @@ def screener(stocklist, date_study):
         print(f"Processing {stock}")
         n += 1
         start_date = date_study - timedelta(days=365)  # Start date for fetching stock data
-        end_date = date_study  # End date for fetching stock data
-        df = pdr.get_data_yahoo(stock, start=start_date, end=end_date)  # Fetch stock data from Yahoo Finance
+        df = pdr.get_data_yahoo(stock, start=start_date, end=date_study)  # Fetch stock data from Yahoo Finance
         print(df)
         time.sleep(0.01)  # Pause to avoid hitting API limits
 
@@ -162,42 +164,34 @@ def screener(stocklist, date_study):
 
     return exportList
 
-def detect_vcp_breakout(stock, date_study, volume_threshold=1.05):
-    start_date = date_study - timedelta(days=365)                   # Start date for fetching stock data
-    end_date = date_study                                           # End date for fetching stock data
-    df = pdr.get_data_yahoo(stock, start=start_date, end=end_date)  # Fetch stock data from Yahoo Finance
-    
-    # Find local extrema
-    df["is_local_max"] = (df["Adj Close"] > df["Adj Close"].shift(1)) & (df["Adj Close"] > df["Adj Close"].shift(-1))
-    df["is_local_min"] = (df["Adj Close"] < df["Adj Close"].shift(1)) & (df["Adj Close"] < df["Adj Close"].shift(-1))
-    
-    # Get dates of local extrema
-    extrema_dates = df.index[df["is_local_min"]]
+def detect_vcp_pattern(stock, date_study, window=5, volume_increase=2, price_increase=1.1):
+    start_date = date_study - timedelta(days=365)  # Start date for fetching stock data
+    data = pdr.get_data_yahoo(stock, start=start_date, end=date_study)  # Fetch stock data from Yahoo Finance
 
-    print("Adj Close: ", df["Adj Close"])
-    print("is_local_max: ", df["is_local_max"])
-    print("is_local_min: ", df["is_local_min"])
-    print("exterme_dates: ", extrema_dates)
-    
-    # Calculate time intervals between extrema
-    time_intervals = extrema_dates.diff().dropna().days
-    print("time_intervals: ", time_intervals)
-    
-    # Check if time intervals are decreasing
-    decreasing_intervals = all(x > y for x, y in zip(time_intervals, time_intervals[1:]))
+    # Ensure Date is a column in the DataFrame
+    data.reset_index(inplace=True)
 
-    breakout_dates = []
-    if decreasing_intervals:
-        # Check for breakout in price and volume
-        breakout = df[(df["Volume"] > df["Volume"].shift(1) * volume_threshold)]
-        if not breakout.empty:
-            # Append all breakout dates to the list
-            breakout_dates.extend(breakout.index.tolist())
+    # Calculate moving averages for price and volume
+    data["MA_Price"] = data["Adj Close"].rolling(window=window).mean()
+    data["MA_Volume"] = data["Volume"].rolling(window=window).mean()
     
-    if breakout_dates:
-        return breakout_dates
-    else:
-        return 'No breakout detected'
+    # Detect periods of relatively low volatility (price stable around MA_Price)
+    data["Volatility"] = np.abs(data["Adj Close"] - data["MA_Price"]) / data["MA_Price"]
+    data["Volatility<0.075"] = np.abs(data["Adj Close"] - data["MA_Price"]) / data["MA_Price"] < 0.075
+    
+    # Detect significant volume increase
+    data["Volume_Increase"] = data["Volume"] / data["MA_Volume"]
+    data["Volume_Increase>" + str(volume_increase)] = data["Volume_Increase"] > volume_increase
+    
+    # Detect significant price increase
+    data["Price_Increase"] = data["Adj Close"] / data["Adj Close"].shift(1)
+    data["Price_Increase>" + str(price_increase)] = data["Price_Increase"] > price_increase
+    
+    # Combine conditions to detect pre-burst pattern
+    data["Pre_Burst_Pattern"] = data["Volatility<0.075"]
+    data["Breakout"] = data["Price_Increase>" + str(price_increase)] & data["Volume_Increase>" + str(volume_increase)]
+
+    return data
 
 def main():
     # Override pandas_datareader's get_data_yahoo function to use yfinance
@@ -209,15 +203,50 @@ def main():
     # Define the stock list and date for the study
     #stocklist = ["AAPL", "MSFT", "GOOGL", "TMDX", "HIMS", "SNX", "STEP", "AMG", "ANET", "ASR", "EURN", "GBDC", "HASI", "MAIN", "NVO", "OLED", "SPG", "UE", "UTHR", "VRTX", "WPM"]
     stocklist = ["TMDX"]
-
-    exportList = screener(stocklist, date_study)
+    #exportList = screener(stocklist, date_study)
 
     # Print the exportList containing stocks that meet the criteria
-    print(exportList)
+    #print(exportList)
 
-    for index, row in exportList.iterrows():
-        stock = row['Stock']
-        breakout_dates = detect_vcp_breakout(stock, date_study)
-        print(stock + ": " + breakout_dates)
+    #for index, row in exportList.iterrows():
+    for stock in stocklist:
+        # stock = row['Stock']
+        data = detect_vcp_pattern(stock, date_study)
+        print(stock, ":", pattern_dates)
+
+         # Get dates where the pattern was detected
+        pattern_dates = data[data["Breakout"]]["Date"]
+
+        plotData(data, pattern_dates)
+
+        # Save to Excel with the first row and first column frozen, adjusted column widths, and defined as a table
+        output_filename = f"{stock}.xlsx"
+        with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
+            data.to_excel(writer, index=False, sheet_name='PatternDates')
+            worksheet = writer.sheets['PatternDates']
+            worksheet.freeze_panes = 'B2'
+
+            # Adjust column widths
+            for col in worksheet.columns:
+                max_length = 0
+                column = col[0].column_letter  # Get the column name
+                for cell in col:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = max_length + 2  # Adding a little extra space
+                worksheet.column_dimensions[column].width = adjusted_width
+
+            # Define the table
+            tab = Table(displayName="PatternTable", ref=f"A1:{get_column_letter(worksheet.max_column)}{worksheet.max_row}")
+
+            # Add a default style with striped rows and banded columns
+            style = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False, showLastColumn=False, showRowStripes=True, showColumnStripes=True)
+            tab.tableStyleInfo = style
+            worksheet.add_table(tab)
+
+        print(f"Pattern dates saved to {output_filename}")
 
 main()
