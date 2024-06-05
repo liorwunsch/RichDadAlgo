@@ -9,7 +9,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl import Workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
-def screener(stocklist, date_study):
+def my_screener(stocklist, date_study):
     # Initialize exportList DataFrame to store stock data that meets the criteria
     exportList = pd.DataFrame(columns=["Stock", "RS_Rating", "currentClose", "20 Day MA", "50 Day MA", "70 Day MA", "150 Day MA", "200 Day MA", "52 Week Low", "52 week High"])
     print("Initial exportList created")
@@ -63,7 +63,7 @@ def screener(stocklist, date_study):
             close_3m = df["Adj Close"].iloc[-63]
             close_6m = df["Adj Close"].iloc[-126]
             close_9m = df["Adj Close"].iloc[-189]
-            close_12m = df["Adj Close"].iloc[-250]
+            close_12m = df["Adj Close"].iloc[-252]
             condition_ipo = False
         except Exception as e:
             condition_ipo = True  # Consider it is an IPO as no price can be found 1 year ago
@@ -113,18 +113,18 @@ def screener(stocklist, date_study):
                 moving_average_200_20 = 0
 
             # Condition checks for stock selection
-            condition_1 = currentClose > moving_average_150 > moving_average_200
-            condition_2 = moving_average_50 > moving_average_200
-            condition_3 = moving_average_200 > moving_average_200_20 # 200 SMA trending up for at least 1 month (ideally 4-5 months)
-            condition_4 = moving_average_50 > moving_average_150 > moving_average_200
-            condition_5 = currentClose > moving_average_50
-            condition_6 = currentClose >= (1.4 * low_of_52week)      # Current Price is at least 40% above 52 week low (Many of the best are up 100-300% before coming out of consolidation)
-            condition_7 = currentClose >= (0.75 * high_of_52week)    # Current Price is within 25% of 52 week high
-            condition_8 = turnover >= 1500000                        # Turnover is larger than 1.5 million
-            condition_9 = true_range_10d < currentClose * 0.08       # True range in the last 10 days is less than 10% of current price
+            condition_1 = True # = currentClose > moving_average_150 > moving_average_200
+            condition_2 = True # = moving_average_50 > moving_average_200
+            condition_3 = True # = moving_average_200 > moving_average_200_20 # 200 SMA trending up for at least 1 month (ideally 4-5 months)
+            condition_4 = True # = moving_average_50 > moving_average_150 > moving_average_200
+            condition_5 = True # = currentClose > moving_average_50
+            condition_6 = True # = currentClose >= (1.4 * low_of_52week)      # Current Price is at least 40% above 52 week low (Many of the best are up 100-300% before coming out of consolidation)
+            condition_7 = True # = currentClose >= (0.75 * high_of_52week)    # Current Price is within 25% of 52 week high
+            condition_8 = True # = turnover >= 1500000                        # Turnover is larger than 1.5 million
+            condition_9 = True # = true_range_10d < currentClose * 0.08       # True range in the last 10 days is less than 10% of current price
             condition_10 = True #currentClose > moving_average_20          # (optional)
             condition_11 = True #true_range_5d < currentClose * 6          # (optional) true range in the last 5 days is less than 6% of current price
-            condition_12 = currentClose > 10
+            condition_12 = True #= currentClose > 10
 
             # Check if all conditions are met
             if all([condition_1, condition_2, condition_3, condition_4, condition_5, condition_6, condition_7, condition_8, condition_9, condition_10, condition_11, condition_12]):
@@ -154,9 +154,13 @@ def screener(stocklist, date_study):
             print(e)
             print("No data on " + stock)
 
+    # Sort the exportList by RS_Rating in descending order
+    exportList = exportList.sort_values(by="RS_Rating", ascending=False)
+    print("Sorted exportList by RS_Rating:", exportList)
+
     # Save the results to CSV
     try:
-        exportList.to_csv('stocks.csv', index=False)
+        exportList.to_csv('elseOutput/stocks.csv', index=False)
         print("CSV file created successfully")
     except Exception as e:
         print(e)
@@ -164,12 +168,14 @@ def screener(stocklist, date_study):
 
     return exportList
 
-def detect_vcp_pattern(stock, date_study, window=5, volume_increase=2, price_increase=1.1):
+def detect_vcp_pattern(stock, date_study, rs_rating, window=5, volume_increase=2, price_increase=1.1):
     start_date = date_study - timedelta(days=365)  # Start date for fetching stock data
     data = pdr.get_data_yahoo(stock, start=start_date, end=date_study)  # Fetch stock data from Yahoo Finance
 
     # Ensure Date is a column in the DataFrame
     data.reset_index(inplace=True)
+    data["RS_Rating"] = rs_rating
+    data["RS_Rating>50"] = rs_rating > 50
 
     # Calculate moving averages for price and volume
     data["MA_Price"] = data["Adj Close"].rolling(window=window).mean()
@@ -201,26 +207,21 @@ def main():
     date_study = datetime.datetime.now()
 
     # Define the stock list and date for the study
-    #stocklist = ["AAPL", "MSFT", "GOOGL", "TMDX", "HIMS", "SNX", "STEP", "AMG", "ANET", "ASR", "EURN", "GBDC", "HASI", "MAIN", "NVO", "OLED", "SPG", "UE", "UTHR", "VRTX", "WPM"]
-    stocklist = ["TMDX"]
-    #exportList = screener(stocklist, date_study)
-
-    # Print the exportList containing stocks that meet the criteria
-    #print(exportList)
-
-    #for index, row in exportList.iterrows():
-    for stock in stocklist:
-        # stock = row['Stock']
-        data = detect_vcp_pattern(stock, date_study)
-        print(stock, ":", pattern_dates)
+    stocklist = ["AAPL", "MSFT", "GOOGL", "TMDX", "HIMS", "SNX", "STEP", "AMG", "ANET", "ASR", "EURN", "GBDC", "HASI", "MAIN", "NVO", "OLED", "SPG", "UE", "UTHR", "VRTX", "WPM"]
+    exportList = my_screener(stocklist, date_study)
+    
+    for index, row in exportList.iterrows():
+        stock = row["Stock"]
+        data = detect_vcp_pattern(stock, date_study, row["RS_Rating"])
+        print(stock, ":", data)
 
          # Get dates where the pattern was detected
         pattern_dates = data[data["Breakout"]]["Date"]
 
-        plotData(data, pattern_dates)
+        #plotData(data, pattern_dates)
 
         # Save to Excel with the first row and first column frozen, adjusted column widths, and defined as a table
-        output_filename = f"{stock}.xlsx"
+        output_filename = f"elseOutput/{stock}.xlsx"
         with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
             data.to_excel(writer, index=False, sheet_name='PatternDates')
             worksheet = writer.sheets['PatternDates']
