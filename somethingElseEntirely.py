@@ -3,15 +3,90 @@ import pandas as pd  # Importing pandas for data manipulation
 import numpy as np  # Importing numpy for numerical computations
 import datetime  # Importing datetime for handling dates
 from datetime import timedelta  # Importing timedelta for date arithmetic
-from pandas_datareader import data as pdr  # Importing pandas_datareader for fetching stock data from Yahoo Finance
 import time  # Importing time for time-related operations
 from openpyxl.utils import get_column_letter
 from openpyxl import Workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
-def my_screener(stocklist, date_study):
+# Fetches historical stock data for the last year
+def get_stock_data(symbol):
+    stock = yf.Ticker(symbol)
+    hist = stock.history(period="1y")
+    return hist
+
+# Calculates the Relative Strength (RS) Rating based on historical stock data
+def calculate_rs_rating(hist):
+    current_close = hist['Adj Close'][-1]
+    close_3m = hist['Adj Close'][-63]  # Approx 3 months
+    close_6m = hist['Adj Close'][-126]  # Approx 6 months
+    close_9m = hist['Adj Close'][-189]  # Approx 9 months
+    close_12m = hist['Adj Close'][-252]  # Approx 12 months
+    rs_rating = (
+        ((current_close - close_3m) / close_3m) * 40 +
+        ((current_close - close_6m) / close_6m) * 20 +
+        ((current_close - close_9m) / close_9m) * 20 +
+        ((current_close - close_12m) / close_12m) * 20
+    )
+    return rs_rating
+
+# Retrieves financial statements for the given stock symbol
+def get_financials(symbol):
+    stock = yf.Ticker(symbol)
+    financials = stock.financials
+    return financials
+
+# Calculates earnings growth based on the net income from financial statements
+def calculate_earnings_growth(financials):
+    earnings = financials.loc['Net Income']
+    recent_earnings = earnings[0]
+    year_ago_earnings = earnings[1]
+    earnings_growth = ((recent_earnings - year_ago_earnings) / year_ago_earnings) * 100
+    return earnings_growth
+
+# Calculates sales growth based on the total revenue from financial statements
+def calculate_sales_growth(financials):
+    sales = financials.loc['Total Revenue']
+    recent_sales = sales[0]
+    year_ago_sales = sales[1]
+    sales_growth = ((recent_sales - year_ago_sales) / year_ago_sales) * 100
+    return sales_growth
+
+# Calculates profit margin based on the most recent net income and total revenue
+def calculate_profit_margin(financials):
+    sales = financials.loc['Total Revenue']
+    earnings = financials.loc['Net Income']
+    recent_sales = sales[0]
+    recent_earnings = earnings[0]
+    profit_margin = (recent_earnings / recent_sales) * 100
+    return profit_margin
+
+# Calculates return on equity (ROE) based on the most recent net income and total stockholder equity
+def calculate_roe(financials):
+    stock = yf.Ticker(symbol)
+    balance_sheet = stock.balance_sheet
+    shareholders_equity = balance_sheet.loc['Total Stockholder Equity']
+    recent_earnings = financials.loc['Net Income'][0]
+    recent_equity = shareholders_equity[0]
+    roe = (recent_earnings / recent_equity) * 100
+    return roe
+
+# Calculates the Composite Rating for a given stock symbol
+def calculate_composite_rating(symbol, rs_rating):
+    financials = get_financials(symbol)
+    earnings_growth = calculate_earnings_growth(financials)
+    sales_growth = calculate_sales_growth(financials)
+    profit_margin = calculate_profit_margin(financials)
+    roe = calculate_roe(financials, symbol)
+
+    # Normalize and weight the metrics
+    composite_rating = (rs_rating * 0.25 + earnings_growth * 0.25 +
+                        sales_growth * 0.25 + profit_margin * 0.125 + roe * 0.125)
+
+    return composite_rating
+
+def my_screener(stocklist):
     # Initialize exportList DataFrame to store stock data that meets the criteria
-    exportList = pd.DataFrame(columns=["Stock", "RS_Rating", "currentClose", "20 Day MA", "50 Day MA", "70 Day MA", "150 Day MA", "200 Day MA", "52 Week Low", "52 week High"])
+    exportList = pd.DataFrame(columns=["Stock", "RS_Rating", "Comp_Rating", "currentClose", "20 Day MA", "50 Day MA", "70 Day MA", "150 Day MA", "200 Day MA", "52 Week Low", "52 week High"])
     print("Initial exportList created")
 
     # Initialize other variables
@@ -28,13 +103,17 @@ def my_screener(stocklist, date_study):
     decl = 0  # Counter for stocks with declining daily close
 
     # Loop through each stock in the stock list
-    for stock in stocklist:
-        print(f"Processing {stock}")
+    for symbol in stocklist:
+        print(f"Processing {symbol}")
         n += 1
-        start_date = date_study - timedelta(days=365)  # Start date for fetching stock data
-        df = pdr.get_data_yahoo(stock, start=start_date, end=date_study)  # Fetch stock data from Yahoo Finance
+
+        hist = get_stock_data(symbol)
+
         print(df)
         time.sleep(0.01)  # Pause to avoid hitting API limits
+
+        rs_rating = calculate_rs_rating(hist)
+        composite_rating = calculate_composite_rating(symbol, rs_rating)
 
         try:
             # Calculate advancing and declining counts based on weekly close
@@ -58,17 +137,6 @@ def my_screener(stocklist, date_study):
         except Exception as e:
             print(e)
 
-        # Calculate closing prices for different time periods
-        try:
-            close_3m = df["Adj Close"].iloc[-63]
-            close_6m = df["Adj Close"].iloc[-126]
-            close_9m = df["Adj Close"].iloc[-189]
-            close_12m = df["Adj Close"].iloc[-252]
-            condition_ipo = False
-        except Exception as e:
-            condition_ipo = True  # Consider it is an IPO as no price can be found 1 year ago
-            print(e)
-
         try:
             # Calculate turnover (Market Activity Indicator, High is Good)
             turnover = df["Volume"].iloc[-1] * df["Adj Close"].iloc[-1]
@@ -79,17 +147,6 @@ def my_screener(stocklist, date_study):
             # Calculate true range for the last 10 days and last 5 days (Diff Between Prices)
             true_range_5d = (max(df["Adj Close"].iloc[-5:-1]) - min(df["Adj Close"].iloc[-5:-1]))
             true_range_10d = (max(df["Adj Close"].iloc[-10:-1]) - min(df["Adj Close"].iloc[-10:-1]))
-        except Exception as e:
-            print(e)
-
-        try:
-            # Calculate RS_Rating (Relative Strength Rating, Performance Indicator, High is Good)
-            RS_Rating = (
-                ((currentClose - close_3m) / close_3m) * 40 +
-                ((currentClose - close_6m) / close_6m) * 20 +
-                ((currentClose - close_9m) / close_9m) * 20 +
-                ((currentClose - close_12m) / close_12m) * 20
-            )
         except Exception as e:
             print(e)
 
@@ -128,15 +185,16 @@ def my_screener(stocklist, date_study):
 
             # Check if all conditions are met
             if all([condition_1, condition_2, condition_3, condition_4, condition_5, condition_6, condition_7, condition_8, condition_9, condition_10, condition_11, condition_12]):
-                final.append(stock)  # Add stock to final list
+                final.append(symbol)  # Add stock to final list
                 index.append(n)  # Add index value to index list
-                rs.append(RS_Rating)  # Add RS_Rating value to rs list
+                rs.append(rs_rating)  # Add RS_Rating value to rs list
                 stocks_fit_condition += 1  # Increment counter for stocks that meet the criteria
 
                 # Append stock data to exportList DataFrame
                 new_row = pd.DataFrame({
-                    'Stock': [stock], 
-                    "RS_Rating": [RS_Rating],
+                    'Stock': [symbol], 
+                    "RS_Rating": [rs_rating],
+                    "Comp_Rating": [composite_rating],
                     "currentClose": [currentClose],
                     "20 Day MA": [moving_average_20],
                     "50 Day MA": [moving_average_50],
@@ -147,12 +205,12 @@ def my_screener(stocklist, date_study):
                     "52 week High": [high_of_52week]
                 })
                 exportList = pd.concat([exportList, new_row], ignore_index=True)
-                print(stock + " made the requirements")
+                print(symbol + " made the requirements")
                 print(date_study)
 
         except Exception as e:
             print(e)
-            print("No data on " + stock)
+            print("No data on " + symbol)
 
     # Sort the exportList by RS_Rating in descending order
     exportList = exportList.sort_values(by="RS_Rating", ascending=False)
@@ -168,14 +226,16 @@ def my_screener(stocklist, date_study):
 
     return exportList
 
-def detect_vcp_pattern(stock, date_study, rs_rating, window=5, volume_increase=2, price_increase=1.1):
-    start_date = date_study - timedelta(days=365)  # Start date for fetching stock data
-    data = pdr.get_data_yahoo(stock, start=start_date, end=date_study)  # Fetch stock data from Yahoo Finance
+def detect_vcp_pattern(stock, rs_rating, composite_rating, window=5, volume_increase=2, price_increase=1.1):
+    data = get_stock_data(symbol)
 
     # Ensure Date is a column in the DataFrame
     data.reset_index(inplace=True)
+    data["Comp_Rating"] = composite_rating
+    data["Comp_Rating>50"] = composite_rating > 50
+
     data["RS_Rating"] = rs_rating
-    data["RS_Rating>50"] = rs_rating > 50
+    data["RS_Rating>55"] = rs_rating > 55
 
     # Calculate moving averages for price and volume
     data["MA_Price"] = data["Adj Close"].rolling(window=window).mean()
@@ -200,19 +260,14 @@ def detect_vcp_pattern(stock, date_study, rs_rating, window=5, volume_increase=2
     return data
 
 def main():
-    # Override pandas_datareader's get_data_yahoo function to use yfinance
-    yf.pdr_override()
-
-    # Today
-    date_study = datetime.datetime.now()
-
     # Define the stock list and date for the study
-    stocklist = ["AAPL", "MSFT", "GOOGL", "TMDX", "HIMS", "SNX", "STEP", "AMG", "ANET", "ASR", "EURN", "GBDC", "HASI", "MAIN", "NVO", "OLED", "SPG", "UE", "UTHR", "VRTX", "WPM"]
-    exportList = my_screener(stocklist, date_study)
+    #stocklist = ["AAPL", "MSFT", "GOOGL", "TMDX", "HIMS", "SNX", "STEP", "AMG", "ANET", "ASR", "EURN", "GBDC", "HASI", "MAIN", "NVO", "OLED", "SPG", "UE", "UTHR", "VRTX", "WPM"]
+    stocklist = ["HIMS"]
+    exportList = my_screener(stocklist)
     
     for index, row in exportList.iterrows():
         stock = row["Stock"]
-        data = detect_vcp_pattern(stock, date_study, row["RS_Rating"])
+        data = detect_vcp_pattern(stock, row["RS_Rating"], row["Comp_Rating"])
         print(stock, ":", data)
 
          # Get dates where the pattern was detected
