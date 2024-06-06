@@ -14,20 +14,34 @@ def get_stock_data(symbol):
     hist = stock.history(period="1y")
     return hist
 
+# Calculate the cumulative performance over the last `n` quarters
+def quarters_perf(hist, n):
+    # Calculate the number of trading days to consider, assuming 252 trading days per year and 63 per quarter
+    length = min(len(closes), n * int(252 / 4))
+    
+    # Get the closing prices for the last `length` days
+    prices = closes.tail(length)
+    
+    # Compute the daily percentage changes in closing prices
+    pct_chg = prices.pct_change().dropna()
+    
+    # Calculate the cumulative performance
+    perf_cum = (pct_chg + 1).cumprod() - 1
+    
+    # Return the cumulative performance of the last day in this period
+    return perf_cum.tail(1).item()
+
 # Calculates the Relative Strength (RS) Rating based on historical stock data
 def calculate_rs_rating(hist):
-    current_close = hist['Adj Close'][-1]
-    close_3m = hist['Adj Close'][-63]  # Approx 3 months
-    close_6m = hist['Adj Close'][-126]  # Approx 6 months
-    close_9m = hist['Adj Close'][-189]  # Approx 9 months
-    close_12m = hist['Adj Close'][-252]  # Approx 12 months
-    rs_rating = (
-        ((current_close - close_3m) / close_3m) * 40 +
-        ((current_close - close_6m) / close_6m) * 20 +
-        ((current_close - close_9m) / close_9m) * 20 +
-        ((current_close - close_12m) / close_12m) * 20
-    )
-    return rs_rating
+    closes = hist['Adj Close']
+    try:
+        quarters1 = quarters_perf(closes, 1) # Approx 3 months
+        quarters2 = quarters_perf(closes, 2) # Approx 6 months
+        quarters3 = quarters_perf(closes, 3) # Approx 9 months
+        quarters4 = quarters_perf(closes, 4) # Approx 12 months
+        return 0.4*quarters1 + 0.2*quarters2 + 0.2*quarters3 + 0.2*quarters4
+    except:
+        return 0
 
 # Retrieves financial statements for the given stock symbol
 def get_financials(symbol):
@@ -35,11 +49,18 @@ def get_financials(symbol):
     financials = stock.financials
     return financials
 
+# TODO LIOR - use this function
+def calculate_earnings_per_share(financials, info): # info = stock.info where stock = yf.Ticker(symbol)
+    net_income = financials.loc['Net Income', :].iloc[0]  # Assuming we want the latest net income
+    outstanding_shares = info['sharesOutstanding']
+    earnings_per_share = net_income / outstanding_shares
+    return earnings_per_share
+
 # Calculates earnings growth based on the net income from financial statements
 def calculate_earnings_growth(financials):
-    earnings = financials.loc['Net Income']
-    recent_earnings = earnings[0]
-    year_ago_earnings = earnings[1]
+    net_income  = financials.loc['Net Income']
+    recent_earnings = net_income[0]
+    year_ago_earnings = net_income[1]
     earnings_growth = ((recent_earnings - year_ago_earnings) / year_ago_earnings) * 100
     return earnings_growth
 
@@ -84,9 +105,9 @@ def calculate_composite_rating(symbol, rs_rating):
 
     return composite_rating
 
-def my_screener(stocklist):
+def minervini_trend_template_screener(stocklist):
     # Initialize exportList DataFrame to store stock data that meets the criteria
-    exportList = pd.DataFrame(columns=["Stock", "RS_Rating", "Comp_Rating", "currentClose", "20 Day MA", "50 Day MA", "70 Day MA", "150 Day MA", "200 Day MA", "52 Week Low", "52 week High"])
+    exportList = pd.DataFrame(columns=["Stock", "RS_Rating", "Comp_Rating"])
     print("Initial exportList created")
 
     # Initialize other variables
@@ -109,7 +130,7 @@ def my_screener(stocklist):
 
         hist = get_stock_data(symbol)
 
-        print(df)
+        print(hist)
         time.sleep(0.01)  # Pause to avoid hitting API limits
 
         rs_rating = calculate_rs_rating(hist)
@@ -117,8 +138,8 @@ def my_screener(stocklist):
 
         try:
             # Calculate advancing and declining counts based on weekly close
-            currentClose = df["Adj Close"].iloc[-1] # -1 is for the last value
-            lastweekClose = df["Adj Close"].iloc[-5]
+            currentClose = hist["Adj Close"].iloc[-1] # -1 is for the last value
+            lastweekClose = hist["Adj Close"].iloc[-5]
             if currentClose > lastweekClose:
                 adv_w += 1
             else:
@@ -128,8 +149,8 @@ def my_screener(stocklist):
 
         try:
             # Calculate advancing and declining counts based on daily close
-            currentClose = df["Adj Close"].iloc[-1]
-            yesterdayClose = df["Adj Close"].iloc[-2]
+            currentClose = hist["Adj Close"].iloc[-1]
+            yesterdayClose = hist["Adj Close"].iloc[-2]
             if currentClose > yesterdayClose:
                 adv += 1
             else:
@@ -139,14 +160,14 @@ def my_screener(stocklist):
 
         try:
             # Calculate turnover (Market Activity Indicator, High is Good)
-            turnover = df["Volume"].iloc[-1] * df["Adj Close"].iloc[-1]
+            turnover = hist["Volume"].iloc[-1] * hist["Adj Close"].iloc[-1]
         except Exception as e:
             print(e)
 
         try:
             # Calculate true range for the last 10 days and last 5 days (Diff Between Prices)
-            true_range_5d = (max(df["Adj Close"].iloc[-5:-1]) - min(df["Adj Close"].iloc[-5:-1]))
-            true_range_10d = (max(df["Adj Close"].iloc[-10:-1]) - min(df["Adj Close"].iloc[-10:-1]))
+            true_range_5d = (max(hist["Adj Close"].iloc[-5:-1]) - min(hist["Adj Close"].iloc[-5:-1]))
+            true_range_10d = (max(hist["Adj Close"].iloc[-10:-1]) - min(hist["Adj Close"].iloc[-10:-1]))
         except Exception as e:
             print(e)
 
@@ -154,37 +175,34 @@ def my_screener(stocklist):
             # Calculate various moving averages
             sma = [20, 50, 70, 150, 200]
             for x in sma:
-                df["SMA_" + str(x)] = round(df.iloc[:, 4].rolling(window=x).mean(), 2)
+                hist["SMA_" + str(x)] = round(hist.iloc[:, 4].rolling(window=x).mean(), 2)
 
-            moving_average_20 = df["SMA_20"].iloc[-1]
-            moving_average_50 = df["SMA_50"].iloc[-1]
-            moving_average_70 = df["SMA_70"].iloc[-1]
-            moving_average_150 = df["SMA_150"].iloc[-1]
-            moving_average_200 = df["SMA_200"].iloc[-1]
-            low_of_52week = min(df["Adj Close"].iloc[-260:])
-            high_of_52week = max(df["Adj Close"].iloc[-260:])
+            moving_average_20 = hist["SMA_20"].iloc[-1]
+            moving_average_50 = hist["SMA_50"].iloc[-1]
+            moving_average_70 = hist["SMA_70"].iloc[-1]
+            moving_average_150 = hist["SMA_150"].iloc[-1]
+            moving_average_200 = hist["SMA_200"].iloc[-1]
+            low_of_52week = min(hist["Adj Close"].iloc[-252:])
+            high_of_52week = max(hist["Adj Close"].iloc[-252:])
 
             try:
-                moving_average_200_20 = df["SMA_200"].iloc[-32]
+                moving_average_200_20 = hist["SMA_200"].iloc[-22]
             except Exception:
                 moving_average_200_20 = 0
 
             # Condition checks for stock selection
-            condition_1 = True # = currentClose > moving_average_150 > moving_average_200
-            condition_2 = True # = moving_average_50 > moving_average_200
-            condition_3 = True # = moving_average_200 > moving_average_200_20 # 200 SMA trending up for at least 1 month (ideally 4-5 months)
-            condition_4 = True # = moving_average_50 > moving_average_150 > moving_average_200
-            condition_5 = True # = currentClose > moving_average_50
-            condition_6 = True # = currentClose >= (1.4 * low_of_52week)      # Current Price is at least 40% above 52 week low (Many of the best are up 100-300% before coming out of consolidation)
-            condition_7 = True # = currentClose >= (0.75 * high_of_52week)    # Current Price is within 25% of 52 week high
-            condition_8 = True # = turnover >= 1500000                        # Turnover is larger than 1.5 million
-            condition_9 = True # = true_range_10d < currentClose * 0.08       # True range in the last 10 days is less than 10% of current price
-            condition_10 = True #currentClose > moving_average_20          # (optional)
-            condition_11 = True #true_range_5d < currentClose * 6          # (optional) true range in the last 5 days is less than 6% of current price
-            condition_12 = True #= currentClose > 10
+            condition_1_1 = currentClose > moving_average_150        # Price > 150-day (30-week) MA
+            condition_1_2 = currentClose > moving_average_200        # Price > 200-day (40-week) MA
+            condition_2 = moving_average_150 > moving_average_200    # 150-day MA > 200-day MA
+            condition_3 = moving_average_200 > moving_average_200_20 # 200-day MA trending up for at least 1 month (22 days)
+            condition_4_1 = moving_average_50 > moving_average_150   # 50-day MA > 150-day MA
+            condition_4_2 = moving_average_50 > moving_average_200   # 50-day MA > 200-day MA
+            condition_5 = currentClose > moving_average_50           # Price above 50-day MA
+            condition_6 = currentClose >= (1.25 * low_of_52week)     # Price at least 25% above 52-week low
+            condition_7 = currentClose >= (0.75 * high_of_52week)    # Price within 25% of 52-week high
 
             # Check if all conditions are met
-            if all([condition_1, condition_2, condition_3, condition_4, condition_5, condition_6, condition_7, condition_8, condition_9, condition_10, condition_11, condition_12]):
+            if all([condition_1_1, condition_1_2, condition_2, condition_3, condition_4_1, condition_4_2, condition_5, condition_6, condition_7]):
                 final.append(symbol)  # Add stock to final list
                 index.append(n)  # Add index value to index list
                 rs.append(rs_rating)  # Add RS_Rating value to rs list
@@ -206,7 +224,6 @@ def my_screener(stocklist):
                 })
                 exportList = pd.concat([exportList, new_row], ignore_index=True)
                 print(symbol + " made the requirements")
-                print(date_study)
 
         except Exception as e:
             print(e)
@@ -218,13 +235,16 @@ def my_screener(stocklist):
 
     # Save the results to CSV
     try:
-        exportList.to_csv('elseOutput/stocks.csv', index=False)
+        exportList.to_csv('Output/stocks.csv', index=False)
         print("CSV file created successfully")
     except Exception as e:
         print(e)
         print("Failed to create CSV file")
 
     return exportList
+
+def detect_vcp_pattern_2(symbol):
+    data = get_stock_data(symbol)
 
 def detect_vcp_pattern(stock, rs_rating, composite_rating, window=5, volume_increase=2, price_increase=1.1):
     data = get_stock_data(symbol)
@@ -259,11 +279,8 @@ def detect_vcp_pattern(stock, rs_rating, composite_rating, window=5, volume_incr
 
     return data
 
-def main():
-    # Define the stock list and date for the study
-    #stocklist = ["AAPL", "MSFT", "GOOGL", "TMDX", "HIMS", "SNX", "STEP", "AMG", "ANET", "ASR", "EURN", "GBDC", "HASI", "MAIN", "NVO", "OLED", "SPG", "UE", "UTHR", "VRTX", "WPM"]
-    stocklist = ["HIMS"]
-    exportList = my_screener(stocklist)
+def should_i_buy_today():
+    exportList = minervini_trend_template_screener(stocklist, date_study) # TODO - per day in the last year
     
     for index, row in exportList.iterrows():
         stock = row["Stock"]
@@ -276,7 +293,7 @@ def main():
         #plotData(data, pattern_dates)
 
         # Save to Excel with the first row and first column frozen, adjusted column widths, and defined as a table
-        output_filename = f"elseOutput/{stock}.xlsx"
+        output_filename = f"Output/{stock}.xlsx"
         with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
             data.to_excel(writer, index=False, sheet_name='PatternDates')
             worksheet = writer.sheets['PatternDates']
@@ -304,5 +321,22 @@ def main():
             worksheet.add_table(tab)
 
         print(f"Pattern dates saved to {output_filename}")
+
+def main():
+    # Define the stock list and date for the study
+    #stocklist = ["AAPL", "MSFT", "GOOGL", "TMDX", "HIMS", "SNX", "STEP", "AMG", "ANET", "ASR", "EURN", "GBDC", "HASI", "MAIN", "NVO", "OLED", "SPG", "UE", "UTHR", "VRTX", "WPM"]
+    stocklist = ["HIMS"]
+
+    date_study = datetime.datetime.now()
+    start_date = date_study - timedelta(days=365)
+
+    results = []
+
+    for symbol in stocklist:
+        current_date = start_date
+        while current_date <= date_study:
+            result = should_i_buy_today(symbol, current_date)
+            results.append(result)
+            current_date += timedelta(days=1)
 
 main()
