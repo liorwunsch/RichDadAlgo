@@ -145,6 +145,37 @@ def isTrendTemplate(data):
 
     return all([condition_1_1, condition_1_2, condition_2, condition_3, condition_4_1, condition_4_2, condition_5, condition_6, condition_7])
 
+def isVcpBreakout(data, rs_rating, comp_rating, window=5, volume_increase=2, price_increase=1.1):
+    # Ensure Date is a column in the DataFrame
+    data.reset_index(inplace=True)
+    data["Comp_Rating"] = comp_rating
+    data["Comp_Rating>50"] = comp_rating > 50
+
+    data["RS_Rating"] = rs_rating
+    data["RS_Rating>55"] = rs_rating > 55
+
+    # Calculate moving averages for price and volume
+    data["MA_Price"] = data["Close"].rolling(window=window).mean()
+    data["MA_Volume"] = data["Volume"].rolling(window=window).mean()
+    
+    # Detect periods of relatively low volatility (price stable around MA_Price)
+    data["Volatility"] = np.abs(data["Close"] - data["MA_Price"]) / data["MA_Price"]
+    data["Volatility<0.075"] = np.abs(data["Close"] - data["MA_Price"]) / data["MA_Price"] < 0.075
+    
+    # Detect significant volume increase
+    data["Volume_Increase"] = data["Volume"] / data["MA_Volume"]
+    data["Volume_Increase>" + str(volume_increase)] = data["Volume_Increase"] > volume_increase
+    
+    # Detect significant price increase
+    data["Price_Increase"] = data["Close"] / data["Close"].shift(1)
+    data["Price_Increase>" + str(price_increase)] = data["Price_Increase"] > price_increase
+    
+    # Combine conditions to detect pre-burst pattern
+    data["Pre_Burst_Pattern"] = data["Volatility<0.075"]
+    data["Breakout"] = data["Price_Increase>" + str(price_increase)] & data["Volume_Increase>" + str(volume_increase)]
+
+    return data["Breakout"].iloc[-1]
+
 def shouldIBuyToday(symbol, date_study):
     one_year_ago = date_study - timedelta(days=365)
     data = yf.Ticker(symbol)
@@ -159,24 +190,26 @@ def shouldIBuyToday(symbol, date_study):
     
     rs_rating, comp_rating, eps = getFinancialRatings(data, financials, balance_sheet, stock_info)
     is_trend_template = isTrendTemplate(data)
+    is_vcp_breakout = isVcpBreakout(data, rs_rating, comp_rating)
 
-    return rs_rating, comp_rating, eps, is_trend_template
+    return rs_rating, comp_rating, eps, is_trend_template, is_vcp_breakout
 
 def whenShouldIBuy(symbol, start_date, end_date):
-    results = pd.DataFrame(columns=["Date", "RS_Rating", "Comp_Rating", "EPS", "isTrendTemplate"])
+    results = pd.DataFrame(columns=["Date", "RS_Rating", "Comp_Rating", "EPS", "isTrendTemplate", "isVcpBreakout"])
 
     date_study = start_date
     rows = []
     while date_study <= end_date:
         print(f"Processing {symbol} at {date_study}")
 
-        rs_rating, comp_rating, eps, is_trend_template = shouldIBuyToday(symbol, date_study)
+        rs_rating, comp_rating, eps, is_trend_template, is_vcp_breakout = shouldIBuyToday(symbol, date_study)
         new_row = {
             "Date": date_study, 
             "RS_Rating": rs_rating,
             "Comp_Rating": comp_rating,
             "EPS": eps,
-            "isTrendTemplate": is_trend_template
+            "isTrendTemplate": is_trend_template,
+            "isVcpBreakout": is_vcp_breakout
         }
         rows.append(new_row)
         date_study += timedelta(days=1)
@@ -191,7 +224,7 @@ def main(stocklist):
     if os.path.exists(folder_name):
         shutil.rmtree(folder_name)
     os.makedirs(folder_name)
-    
+
     today_ = datetime.datetime.now()
     if today_.hour < 23 or (today_.hour == 23 and today_.minute < 1): # Israel Time After Hours
         yesterday_ = today_ - timedelta(days=1)
@@ -199,7 +232,7 @@ def main(stocklist):
     else:
         today_ = datetime.datetime(today_.year, today_.month, today_.day, 23, 1)
 
-    one_year_ago = today_ - timedelta(days=2) # 365
+    one_year_ago = today_ - timedelta(days=30) # 365 - TODO
 
     for symbol in stocklist:
         results = whenShouldIBuy(symbol, one_year_ago, today_)
