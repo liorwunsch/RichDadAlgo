@@ -1,79 +1,58 @@
-import yfinance as yf  # Importing yfinance for fetching stock data
-import pandas as pd  # Importing pandas for data manipulation
-import numpy as np  # Importing numpy for numerical computations
-import datetime  # Importing datetime for handling dates
-from datetime import timedelta  # Importing timedelta for date arithmetic
-import time  # Importing time for time-related operations
+import yfinance as yf
+import pandas as pd 
+import numpy as np
+import datetime
+from datetime import timedelta
+import time 
 from openpyxl.utils import get_column_letter
 from openpyxl import Workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
-# Fetches historical stock data for the last year
-def get_stock_data(symbol):
-    stock = yf.Ticker(symbol)
-    hist = stock.history(period="1y")
-    return hist
+# Cumulative performance over the last `n` quarters
+def calcQuarterPerformance(closes, n):
+    length = min(len(closes), n * int(252 / 4)) # Calculate the number of trading days to consider, assuming 252 trading days per year
+    prices = closes.tail(length)                # Get the closing prices for the last `length` days
+    pct_chg = prices.pct_change().dropna()      # Compute the daily percentage changes in closing prices
+    perf_cum = (pct_chg + 1).cumprod() - 1      # Calculate the cumulative performance
+    return perf_cum.tail(1).item()              # Return the cumulative performance of the last day in this period
 
-# Calculate the cumulative performance over the last `n` quarters
-def quarters_perf(hist, n):
-    # Calculate the number of trading days to consider, assuming 252 trading days per year and 63 per quarter
-    length = min(len(closes), n * int(252 / 4))
-    
-    # Get the closing prices for the last `length` days
-    prices = closes.tail(length)
-    
-    # Compute the daily percentage changes in closing prices
-    pct_chg = prices.pct_change().dropna()
-    
-    # Calculate the cumulative performance
-    perf_cum = (pct_chg + 1).cumprod() - 1
-    
-    # Return the cumulative performance of the last day in this period
-    return perf_cum.tail(1).item()
-
-# Calculates the Relative Strength (RS) Rating based on historical stock data
-def calculate_rs_rating(hist):
-    closes = hist['Adj Close']
+# Relative Strength (RS) Rating
+def calcRsRating(data):
+    closes = data['Adj Close']
     try:
-        quarters1 = quarters_perf(closes, 1) # Approx 3 months
-        quarters2 = quarters_perf(closes, 2) # Approx 6 months
-        quarters3 = quarters_perf(closes, 3) # Approx 9 months
-        quarters4 = quarters_perf(closes, 4) # Approx 12 months
+        quarters1 = calcQuarterPerformance(closes, 1)
+        quarters2 = calcQuarterPerformance(closes, 2)
+        quarters3 = calcQuarterPerformance(closes, 3)
+        quarters4 = calcQuarterPerformance(closes, 4)
         return 0.4*quarters1 + 0.2*quarters2 + 0.2*quarters3 + 0.2*quarters4
     except:
         return 0
 
-# Retrieves financial statements for the given stock symbol
-def get_financials(symbol):
-    stock = yf.Ticker(symbol)
-    financials = stock.financials
-    return financials
-
-# TODO LIOR - use this function
-def calculate_earnings_per_share(financials, info): # info = stock.info where stock = yf.Ticker(symbol)
-    net_income = financials.loc['Net Income', :].iloc[0]  # Assuming we want the latest net income
-    outstanding_shares = info['sharesOutstanding']
+# Earnings Per Share (EPS), a company's profitability per outstanding share of stock
+def calcEPS(data):
+    net_income = data.financials.loc['Net Income', :].iloc[0]  # Assuming we want the latest net income
+    outstanding_shares = data.info['sharesOutstanding']
     earnings_per_share = net_income / outstanding_shares
     return earnings_per_share
 
-# Calculates earnings growth based on the net income from financial statements
-def calculate_earnings_growth(financials):
+# Earnings growth based on the net income from financial statements
+def calcEarningsGrowth(financials):
     net_income  = financials.loc['Net Income']
     recent_earnings = net_income[0]
     year_ago_earnings = net_income[1]
     earnings_growth = ((recent_earnings - year_ago_earnings) / year_ago_earnings) * 100
     return earnings_growth
 
-# Calculates sales growth based on the total revenue from financial statements
-def calculate_sales_growth(financials):
+# Sales growth based on the total revenue from financial statements
+def calcSalesGrowth(financials):
     sales = financials.loc['Total Revenue']
     recent_sales = sales[0]
     year_ago_sales = sales[1]
     sales_growth = ((recent_sales - year_ago_sales) / year_ago_sales) * 100
     return sales_growth
 
-# Calculates profit margin based on the most recent net income and total revenue
-def calculate_profit_margin(financials):
+# Profit margin based on the most recent net income and total revenue
+def calcProfitMargin(financials):
     sales = financials.loc['Total Revenue']
     earnings = financials.loc['Net Income']
     recent_sales = sales[0]
@@ -81,29 +60,28 @@ def calculate_profit_margin(financials):
     profit_margin = (recent_earnings / recent_sales) * 100
     return profit_margin
 
-# Calculates return on equity (ROE) based on the most recent net income and total stockholder equity
-def calculate_roe(financials):
-    stock = yf.Ticker(symbol)
-    balance_sheet = stock.balance_sheet
+# Return on Equity (ROE), a company's profitability relative to shareholders' equity, based on the most recent net income and total stockholder equity
+def calcROE(data):
+    balance_sheet = data.balance_sheet
     shareholders_equity = balance_sheet.loc['Total Stockholder Equity']
-    recent_earnings = financials.loc['Net Income'][0]
+    recent_earnings = data.financials.loc['Net Income'][0]
     recent_equity = shareholders_equity[0]
     roe = (recent_earnings / recent_equity) * 100
     return roe
 
-# Calculates the Composite Rating for a given stock symbol
-def calculate_composite_rating(symbol, rs_rating):
-    financials = get_financials(symbol)
-    earnings_growth = calculate_earnings_growth(financials)
-    sales_growth = calculate_sales_growth(financials)
-    profit_margin = calculate_profit_margin(financials)
-    roe = calculate_roe(financials, symbol)
+# Composite Rating
+def calcCompRating(data, rs_rating):
+    earnings_growth = calcEarningsGrowth(data.financials)
+    sales_growth = calcSalesGrowth(data.financials)
+    profit_margin = calcProfitMargin(data.financials)
+    roe = calcROE(data)
+    return 0.25*rs_rating + 0.25*earnings_growth + 0.25*sales_growth + 0.125*profit_margin + 0.125*roe # Normalize and weight the metrics
 
-    # Normalize and weight the metrics
-    composite_rating = (rs_rating * 0.25 + earnings_growth * 0.25 +
-                        sales_growth * 0.25 + profit_margin * 0.125 + roe * 0.125)
-
-    return composite_rating
+def getFinancialRatings(data):
+    rs_rating = calcRsRating(data)
+    comp_rating = calcCompRating(data, rs_rating)
+    eps = calcEPS(data)
+    return rs_rating, comp_rating, eps
 
 def minervini_trend_template_screener(stocklist):
     # Initialize exportList DataFrame to store stock data that meets the criteria
@@ -134,7 +112,7 @@ def minervini_trend_template_screener(stocklist):
         time.sleep(0.01)  # Pause to avoid hitting API limits
 
         rs_rating = calculate_rs_rating(hist)
-        composite_rating = calculate_composite_rating(symbol, rs_rating)
+        composite_rating = calcCompRating(symbol, rs_rating)
 
         try:
             # Calculate advancing and declining counts based on weekly close
@@ -279,7 +257,7 @@ def detect_vcp_pattern(stock, rs_rating, composite_rating, window=5, volume_incr
 
     return data
 
-def should_i_buy_today():
+def should_i_buy_today_2():
     exportList = minervini_trend_template_screener(stocklist, date_study) # TODO - per day in the last year
     
     for index, row in exportList.iterrows():
@@ -322,21 +300,32 @@ def should_i_buy_today():
 
         print(f"Pattern dates saved to {output_filename}")
 
-def main():
-    # Define the stock list and date for the study
-    #stocklist = ["AAPL", "MSFT", "GOOGL", "TMDX", "HIMS", "SNX", "STEP", "AMG", "ANET", "ASR", "EURN", "GBDC", "HASI", "MAIN", "NVO", "OLED", "SPG", "UE", "UTHR", "VRTX", "WPM"]
-    stocklist = ["HIMS"]
 
-    date_study = datetime.datetime.now()
-    start_date = date_study - timedelta(days=365)
+def is_trend_template(data):
+    a = 1
+
+def should_i_buy_today(symbol, date_study):
+    one_year_ago = date_study - timedelta(days=365)
+    data = yf.Ticker(symbol).history(start=one_year_ago, end=date_study)
+    data.reset_index(inplace=True) # Ensure Date is a column in the DataFrame
+    
+    rs_rating, comp_rating, eps = getFinancialRatings(data)
+    is_trend_template(data)
+
+def main(stocklist):
+    today_ = datetime.datetime.now()
+    one_year_ago = today_ - timedelta(days=365)
 
     results = []
-
     for symbol in stocklist:
-        current_date = start_date
-        while current_date <= date_study:
-            result = should_i_buy_today(symbol, current_date)
+        date_study = one_year_ago
+        while date_study <= today_:
+            result = should_i_buy_today(symbol, date_study)
             results.append(result)
-            current_date += timedelta(days=1)
+            date_study += timedelta(days=1)
 
-main()
+# Define the stock list and date for the study
+#stocklist = ["AAPL", "MSFT", "GOOGL", "TMDX", "HIMS", "SNX", "STEP", "AMG", "ANET", "ASR", "EURN", "GBDC", "HASI", "MAIN", "NVO", "OLED", "SPG", "UE", "UTHR", "VRTX", "WPM"]
+stocklist = ["HIMS"]
+
+main(stocklist)

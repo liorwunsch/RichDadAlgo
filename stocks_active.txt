@@ -1,4 +1,6 @@
 // Stock ; Buy Price ; Buy Date (Pre-Market)
+CSPX.L ; 526    ; 05-Feb-2024
 QQQ    ; 459.03 ; 28-May-2024
 IVV    ; 528.26 ; 29-May-2024
-CSPX.L ; 526    ; 05-Feb-2024
+NVO    ; 141.44 ; 05-Jun-2024
+QLD    ; 93.15  ; 05-Jun-2024
