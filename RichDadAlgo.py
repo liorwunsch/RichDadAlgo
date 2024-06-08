@@ -145,22 +145,17 @@ def isTrendTemplate(data):
 
     return all([condition_1_1, condition_1_2, condition_2, condition_3, condition_4_1, condition_4_2, condition_5, condition_6, condition_7])
 
-def isVcpBreakout(data, rs_rating, comp_rating, window=5, volume_increase=2, price_increase=1.1):
+def isVCP(data, _window=5, volume_increase=2, price_increase=1.1):
     # Ensure Date is a column in the DataFrame
     data.reset_index(inplace=True)
-    data["Comp_Rating"] = comp_rating
-    data["Comp_Rating>50"] = comp_rating > 50
-
-    data["RS_Rating"] = rs_rating
-    data["RS_Rating>55"] = rs_rating > 55
 
     # Calculate moving averages for price and volume
-    data["MA_Price"] = data["Close"].rolling(window=window).mean()
-    data["MA_Volume"] = data["Volume"].rolling(window=window).mean()
+    data["MA_Price"] = data["Close"].rolling(window=_window).mean()
+    data["MA_Volume"] = data["Volume"].rolling(window=_window).mean()
     
     # Detect periods of relatively low volatility (price stable around MA_Price)
     data["Volatility"] = np.abs(data["Close"] - data["MA_Price"]) / data["MA_Price"]
-    data["Volatility<0.075"] = np.abs(data["Close"] - data["MA_Price"]) / data["MA_Price"] < 0.075
+    data["Volatility<0.075"] = data["Volatility"] < 0.075
     
     # Detect significant volume increase
     data["Volume_Increase"] = data["Volume"] / data["MA_Volume"]
@@ -170,13 +165,13 @@ def isVcpBreakout(data, rs_rating, comp_rating, window=5, volume_increase=2, pri
     data["Price_Increase"] = data["Close"] / data["Close"].shift(1)
     data["Price_Increase>" + str(price_increase)] = data["Price_Increase"] > price_increase
     
-    # Combine conditions to detect pre-burst pattern
+    # Combine conditions to detect pre-burst (vcp) pattern
     data["Pre_Burst_Pattern"] = data["Volatility<0.075"]
     data["Breakout"] = data["Price_Increase>" + str(price_increase)] & data["Volume_Increase>" + str(volume_increase)]
 
-    return data["Breakout"].iloc[-1]
+    return data["Pre_Burst_Pattern"].iloc[-1], data["Breakout"].iloc[-1]
 
-def shouldIBuyToday(symbol, date_study):
+def getKpiAtDay(symbol, date_study):
     one_year_ago = date_study - timedelta(days=365)
     data = yf.Ticker(symbol)
     
@@ -190,34 +185,44 @@ def shouldIBuyToday(symbol, date_study):
     
     rs_rating, comp_rating, eps = getFinancialRatings(data, financials, balance_sheet, stock_info)
     is_trend_template = isTrendTemplate(data)
-    is_vcp_breakout = isVcpBreakout(data, rs_rating, comp_rating)
+    is_vcp_pattern, is_vcp_breakout = isVCP(data)
 
-    return rs_rating, comp_rating, eps, is_trend_template, is_vcp_breakout
+    kpi_row = {
+        "Date": date_study, 
+        "RS_Rating": rs_rating,
+        "Comp_Rating": comp_rating,
+        "EPS": eps,
+        "isTrendTemplate": is_trend_template,
+        "isVcpPattern": is_vcp_pattern,
+        "isVcpBreakout": is_vcp_breakout
+    }
+    return kpi_row
 
-def whenShouldIBuy(symbol, start_date, end_date):
-    results = pd.DataFrame(columns=["Date", "RS_Rating", "Comp_Rating", "EPS", "isTrendTemplate", "isVcpBreakout"])
+def getKpiAtPeriod(symbol, start_date, end_date):
+    kpi_results = pd.DataFrame(columns=["Date", "RS_Rating", "Comp_Rating", "EPS", "isTrendTemplate", "isVcpPattern", "isVcpBreakout"])
 
     date_study = start_date
-    rows = []
+    kpi_rows = []
     while date_study <= end_date:
         print(f"Processing {symbol} at {date_study}")
 
-        rs_rating, comp_rating, eps, is_trend_template, is_vcp_breakout = shouldIBuyToday(symbol, date_study)
-        new_row = {
-            "Date": date_study, 
-            "RS_Rating": rs_rating,
-            "Comp_Rating": comp_rating,
-            "EPS": eps,
-            "isTrendTemplate": is_trend_template,
-            "isVcpBreakout": is_vcp_breakout
-        }
-        rows.append(new_row)
+        kpi_row = getKpiAtDay(symbol, date_study)
+        kpi_rows.append(kpi_row)
+
         date_study += timedelta(days=1)
 
-    results = pd.concat([results, pd.DataFrame(rows)], ignore_index=True)
-    printToExcel(symbol, results)
+    kpi_results = pd.concat([kpi_results, pd.DataFrame(kpi_rows)], ignore_index=True)
+    printToExcel(symbol, kpi_results)
 
-    return results
+    return kpi_results
+
+def determineBuyPoints(kpi_results):
+    buy_points = []
+
+    #if is_trend_template & was_vcp_pattern & is_vcp_breakout:
+    #    buy_dates.append(date_study)
+
+    return buy_points
 
 def main(stocklist):
     folder_name = "Output"
@@ -225,17 +230,18 @@ def main(stocklist):
         shutil.rmtree(folder_name)
     os.makedirs(folder_name)
 
-    today_ = datetime.datetime.now()
-    if today_.hour < 23 or (today_.hour == 23 and today_.minute < 1): # Israel Time After Hours
-        yesterday_ = today_ - timedelta(days=1)
-        today_ = datetime.datetime(yesterday_.year, yesterday_.month, yesterday_.day, 23, 1)
+    _today = datetime.datetime.now()
+    if _today.hour < 23 or (_today.hour == 23 and _today.minute < 1): # Israel Time After Hours
+        yesterday_ = _today - timedelta(days=1)
+        _today = datetime.datetime(yesterday_.year, yesterday_.month, yesterday_.day, 23, 1)
     else:
-        today_ = datetime.datetime(today_.year, today_.month, today_.day, 23, 1)
+        _today = datetime.datetime(_today.year, _today.month, _today.day, 23, 1)
 
-    one_year_ago = today_ - timedelta(days=30) # 365 - TODO
+    one_year_ago = _today - timedelta(days=30) # 365 - LIOR TO-DO
 
     for symbol in stocklist:
-        results = whenShouldIBuy(symbol, one_year_ago, today_)
+        kpi_results = getKpiAtPeriod(symbol, one_year_ago, _today)
+        buy_points = determineBuyPoints(kpi_results)
 
 # Define the stock list and date for the study
 #stocklist = ["AAPL", "MSFT", "GOOGL", "TMDX", "HIMS", "SNX", "STEP", "AMG", "ANET", "ASR", "EURN", "GBDC", "HASI", "MAIN", "NVO", "OLED", "SPG", "UE", "UTHR", "VRTX", "WPM"]
