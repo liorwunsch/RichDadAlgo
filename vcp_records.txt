@@ -1,0 +1,16 @@
+Symbol ; BreakoutDate ; Recognized ;
+TMDX   ; 01-May-2024  ; False      ;
+HIMS   ; 20-May-2024  ; True       ;
+AAPL   ; 03-May-2024  ; False      ;
+TRI    ; 02-May-2024  ; False      ;
+MKL    ; 02-May-2024  ; False      ;
+PINS   ; 01-May-2024  ; True       ;
+QTWO   ; 02-May-2024  ; False      ;
+USFD   ; 15-Feb-2024  ; False      ;
+TGT    ; 05-Mar-2024  ; False      ;
+WMT    ; 16-May-2024  ; False      ;
+ELAN   ; 08-May-2024  ; False      ;
+EMR    ; 07-Feb-2024  ; False      ;
+AMZN   ; 02-Feb-2024  ; False      ;
+META   ; 02-Feb-2024  ; False      ;
+HEI    ; 31-May-2024  ; False      ;

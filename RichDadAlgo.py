@@ -161,7 +161,7 @@ def isTrendTemplate(data):
     is_trend_template = all([condition_1_1, condition_1_2, condition_2, condition_3, condition_4_1, condition_4_2, condition_5, condition_6, condition_7])
     return is_trend_template
 
-def isVCP(data, _window=5, volume_increase=2, price_increase=1.1):
+def isVCP(data, _window=5, volume_increase_condition=1.75, price_increase_condition=1.05):
     # Ensure Date is a column in the DataFrame
     data.reset_index(inplace=True)
 
@@ -175,19 +175,21 @@ def isVCP(data, _window=5, volume_increase=2, price_increase=1.1):
     
     # Detect significant volume increase
     data["Volume_Increase"] = data["Volume"] / data["MA_Volume"]
-    data["Volume_Increase>" + str(volume_increase)] = data["Volume_Increase"] > volume_increase
+    data["Volume_Increase>" + str(volume_increase_condition)] = data["Volume_Increase"] > volume_increase_condition
     
     # Detect significant price increase
     data["Price_Increase"] = data["Close"] / data["Close"].shift(1)
-    data["Price_Increase>" + str(price_increase)] = data["Price_Increase"] > price_increase
+    data["Price_Increase>" + str(price_increase_condition)] = data["Price_Increase"] > price_increase_condition
     
     # Combine conditions to detect pre-burst (vcp) pattern
     data["Pre_Burst_Pattern"] = data["Volatility<0.075"]
-    data["Breakout"] = data["Price_Increase>" + str(price_increase)] & data["Volume_Increase>" + str(volume_increase)]
+    data["Breakout"] = data["Price_Increase>" + str(price_increase_condition)] & data["Volume_Increase>" + str(volume_increase_condition)]
 
     is_vcp_pattern = data["Pre_Burst_Pattern"].iloc[-1]
     is_vcp_breakout = data["Breakout"].iloc[-1]
-    return is_vcp_pattern, is_vcp_breakout
+    price_increase = data["Price_Increase"].iloc[-1]
+    volume_increase = data["Volume_Increase"].iloc[-1]
+    return is_vcp_pattern, is_vcp_breakout, price_increase, volume_increase
 
 def getKpiAtDay(symbol, date_study):
     one_year_ago = date_study - timedelta(days=365)
@@ -203,11 +205,13 @@ def getKpiAtDay(symbol, date_study):
     
     rs_rating, comp_rating, eps = getFinancialRatings(data, financials, balance_sheet, stock_info)
     is_trend_template = isTrendTemplate(data)
-    is_vcp_pattern, is_vcp_breakout = isVCP(data)
+    is_vcp_pattern, is_vcp_breakout, price_increase, volume_increase = isVCP(data)
 
     kpi_row = {
         "Date": date_study,
         "Close": data["Close"].iloc[-1],
+        "PriceIncrease": price_increase,
+        "VolumeIncrease": volume_increase,
         "RS_Rating": rs_rating,
         "Comp_Rating": comp_rating,
         "EPS": eps,
@@ -236,14 +240,18 @@ def getKpiAtPeriod(symbol, start_date, end_date):
 # output: (getKpiAtPeriod) kpi_results + ["isBuyPoint"]
 def determineBuyPoints(kpi_results):
     buy_points = []
+    buy_points_no_template = []
 
     prev_row = None
     for index, row in kpi_results.iterrows():
         if prev_row is not None:
-            if row["isTrendTemplate"] and prev_row["isVcpPattern"] and row["isVcpBreakout"]:
-                buy_points.append(row["Date"])
+            if prev_row["isVcpPattern"] and row["isVcpBreakout"]:
+                buy_points_no_template.append(row["Date"])
+                if row["isTrendTemplate"]:
+                    buy_points.append(row["Date"])
         prev_row = row
     
+    kpi_results["isBuyPointNoTemplate"] = kpi_results["Date"].isin(buy_points_no_template)
     kpi_results["isBuyPoint"] = kpi_results["Date"].isin(buy_points)
     return kpi_results
 
@@ -310,11 +318,13 @@ def determineSellPoints(kpi_results, r): # r(isk)
     addDatePriceEntries(kpi_results, partial_sell_points_2, "isSellPointPartial2", "SellPrice0.33")
     return kpi_results
 
-def addStockTransactions(symbol, transactions, kpi_results, r): # r(isk)
+def addStockTransactions(symbol, kpi_results, r): # r(isk)
+    transactions = []
     viable_entries = kpi_results[(kpi_results["isBuyPointActual"] | kpi_results["isSellPointWhole"] |
                                    kpi_results["isSellPointPartial1"] | kpi_results["isSellPointPartial2"])]
     
-    for index, row in viable_entries.iterrows():
+    for index in range(len(viable_entries)):
+        row = viable_entries.iloc[index]
         if row["isBuyPointActual"]:
             buy_price = row["BuyPrice"]
             buy_date = row["Date"]
@@ -322,12 +332,12 @@ def addStockTransactions(symbol, transactions, kpi_results, r): # r(isk)
             sell_price = -1
 
             try:
-                next_row = viable_entries.iloc[index-1 + 1]
+                next_row = viable_entries.iloc[index + 1]
                 if next_row["isSellPointWhole"]:
                     sell_price = next_row["SellPrice1.00"]
                     sell_date = next_row["Date"]
                 else:
-                    second_next_row = viable_entries.iloc[index-1 + 2]
+                    second_next_row = viable_entries.iloc[index + 2]
                     if next_row["isSellPointPartial1"] and second_next_row["isSellPointPartial2"]:
                         sell_price = next_row["SellPrice0.67"] + second_next_row["SellPrice0.33"]
                         sell_date = second_next_row["Date"]
@@ -386,7 +396,7 @@ def main(stocklist, r):
     else:
         _today = datetime.datetime(_today.year, _today.month, _today.day, 23, 1)
 
-    one_year_ago = _today - timedelta(days=22) # 366 - LIOR TO-DO
+    one_year_ago = _today - timedelta(days=23) # 41 # 366 - LIOR TO-DO
 
     transactions = []
     for symbol in stocklist:
@@ -395,7 +405,7 @@ def main(stocklist, r):
         kpi_results = determineSellPoints(kpi_results, r)
         printToExcel(symbol, kpi_results)
 
-        transactions = addStockTransactions(symbol, transactions, kpi_results, r)
+        transactions.extend(addStockTransactions(symbol, kpi_results, r))
     
     transactions = pd.DataFrame(transactions)
     printToExcel("zzTransactions", transactions)
@@ -403,7 +413,6 @@ def main(stocklist, r):
     #summarizeStockActivity()
 
 # Define the stock list and date for the study
-#stocklist = ["AAPL", "MSFT", "GOOGL", "TMDX", "HIMS", "SNX", "STEP", "AMG", "ANET", "ASR", "EURN", "GBDC", "HASI", "MAIN", "NVO", "OLED", "SPG", "UE", "UTHR", "VRTX", "WPM"]
 stocklist = ["HIMS"]
 r = 5/100
 
