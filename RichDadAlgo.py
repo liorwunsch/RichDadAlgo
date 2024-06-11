@@ -206,7 +206,8 @@ def getKpiAtDay(symbol, date_study):
     is_vcp_pattern, is_vcp_breakout = isVCP(data)
 
     kpi_row = {
-        "Date": date_study, 
+        "Date": date_study,
+        "Close": data["Close"].iloc[-1],
         "RS_Rating": rs_rating,
         "Comp_Rating": comp_rating,
         "EPS": eps,
@@ -216,6 +217,7 @@ def getKpiAtDay(symbol, date_study):
     }
     return kpi_row
 
+# output: (getKpiAtDay) kpi_row(s)
 def getKpiAtPeriod(symbol, start_date, end_date):
     kpi_rows = []
     
@@ -231,6 +233,7 @@ def getKpiAtPeriod(symbol, start_date, end_date):
     kpi_results = pd.DataFrame(kpi_rows)
     return kpi_results
 
+# output: (getKpiAtPeriod) kpi_results + ["isBuyPoint"]
 def determineBuyPoints(kpi_results):
     buy_points = []
 
@@ -241,15 +244,119 @@ def determineBuyPoints(kpi_results):
                 buy_points.append(row["Date"])
         prev_row = row
     
-    if not buy_points:
-        print("determineBuyPoints: No buy points found")
-    else:
-        print("buy_points: ", buy_points)
-    
     kpi_results["isBuyPoint"] = kpi_results["Date"].isin(buy_points)
     return kpi_results
 
-def main(stocklist):
+def addDatePriceEntries(kpi_results, date_price_entries, ispoint_col, price_col):
+    # Initialize columns if not already present
+    if ispoint_col not in kpi_results.columns:
+        kpi_results[ispoint_col] = False
+    if price_col not in kpi_results.columns:
+        kpi_results[price_col] = None
+
+    # Update columns
+    for date, buy_price in date_price_entries:
+        kpi_results.loc[kpi_results["Date"] == date, ispoint_col] = True
+        kpi_results.loc[kpi_results["Date"] == date, price_col] = buy_price
+
+# output: (determineBuyPoints) kpi_results +
+#        ["isBuyPointActual", "BuyPrice", "isSellPointWhole", "SellPrice1.00",
+#         "isSellPointPartial1", "SellPrice0.67", "isSellPointPartial2", "SellPrice0.33"]
+def determineSellPoints(kpi_results, r): # r(isk)
+    actual_buy_points = []
+    whole_sell_points = []
+    partial_sell_points_1 = []
+    partial_sell_points_2 = []
+
+    is_bought, is_partially_sold = False, False
+    for index, row in kpi_results.iterrows():
+        date, close = row["Date"], row["Close"]
+        if not is_bought:
+            if row["isBuyPoint"]:
+                buy_price = close
+                actual_buy_points.append((date, buy_price))
+                
+                stop_price = buy_price * (1 - r) # Loss (-r)
+                limit_price = buy_price * (1 + 3*r) # Profit (3r)
+
+                is_bought = True
+        else:
+            # sell below
+            if close <= stop_price:
+                if not is_partially_sold:
+                    whole_sell_points.append((date, stop_price * 1)) # Loss (-r)
+                else:
+                    partial_sell_points_2.append((date, stop_price * 1/3)) # 2nd 'Loss' (1.5r * 1/3 = 0.5r)
+
+                is_bought, is_partially_sold = False, False
+
+            # sell above
+            if close >= limit_price:
+                if not is_partially_sold:
+                    partial_sell_points_1.append((date, limit_price * 2/3)) # Profit (3r * 2/3 = 2r)
+                    # buy_price stays the same
+                    stop_price = buy_price * (1 + 1.5*r) # 2nd 'Loss' (1.5r * 1/3 = 0.5r)
+                    limit_price = buy_price * (1 + 4.5*r) # 2nd Profit (4.5r * 1/3 = 1.5r)
+
+                    is_partially_sold = True
+                else:
+                    partial_sell_points_2.append((date, limit_price * 1/3)) # 2nd Profit (4.5r * 1/3 = 1.5r)
+
+                    is_bought, is_partially_sold = False, False
+
+    addDatePriceEntries(kpi_results, actual_buy_points, "isBuyPointActual", "BuyPrice")
+    addDatePriceEntries(kpi_results, whole_sell_points, "isSellPointWhole", "SellPrice1.00")
+    addDatePriceEntries(kpi_results, partial_sell_points_1, "isSellPointPartial1", "SellPrice0.67")
+    addDatePriceEntries(kpi_results, partial_sell_points_2, "isSellPointPartial2", "SellPrice0.33")
+    return kpi_results
+
+def calculateProfitPerTransaction(kpi_results, r): # r(isk)
+    transactions = []
+    viable_entries = kpi_results[(kpi_results["isBuyPointActual"] | kpi_results["isSellPointWhole"] |
+                                   kpi_results["isSellPointPartial1"] | kpi_results["isSellPointPartial2"])]
+    
+    for index, row in viable_entries.iterrows():
+        if row["isBuyPointActual"]:
+            buy_price = row["BuyPrice"]
+            sell_price = -1
+
+            if index + 1 < len(viable_entries): # last entry or before
+                next_row = viable_entries.iloc[index + 1]
+                if next_row["isSellPointWhole"]:
+                    sell_price = next_row["SellPrice1.00"]
+
+            if sell_price == -1 and index + 2 < len(viable_entries): # two last entries or before
+                next_row = viable_entries.iloc[index + 1]
+                second_next_row = viable_entries.iloc[index + 2]
+                if next_row["isSellPointPartial1"] and second_next_row["isSellPointPartial2"]:
+                    sell_price = next_row["SellPrice0.67"] + second_next_row["SellPrice0.33"]
+
+            if sell_price != -1:
+                profit_percent = (sell_price / buy_price)
+                profit_r = profit_percent / r
+                transactions.append((profit_percent, profit_r, buy_price, sell_price))
+
+    return transactions
+
+def summarizeKpiResults(symbol, kpi_results, r): # r(isk)
+    transactions = calculateProfitPerTransaction(kpi_results, r)
+    
+    profit_entries = [entry for entry in transactions if entry[0] > 0]
+    successful_transactions_percent = len(profit_entries) / len(transactions) * 100
+    
+    mean_profit_r = sum(entry[1] for entry in profit_entries) / len(profit_entries)
+
+    total_buy_price = sum(entry[1] for entry in profit_entries) / len(profit_entries)
+
+    summary = {
+        "Symbol": symbol,
+        "Success_Rate[%]": successful_transactions_percent,
+        "Success_Mean_r": mean_profit_r,
+        "Final_Profit[%]":
+    }
+    return summary
+
+def main(stocklist, r):
     folder_name = "Output"
     try:
         if os.path.exists(folder_name):
@@ -268,14 +375,17 @@ def main(stocklist):
 
     one_year_ago = _today - timedelta(days=30) # 365 - LIOR TO-DO
 
-    stocks_buy_points = []
     for symbol in stocklist:
         kpi_results = getKpiAtPeriod(symbol, one_year_ago, _today)
         kpi_results = determineBuyPoints(kpi_results)
+        kpi_results = determineSellPoints(kpi_results, r)
         printToExcel(symbol, kpi_results)
+
+        summary = summarizeKpiResults(symbol, kpi_results, r)
 
 # Define the stock list and date for the study
 #stocklist = ["AAPL", "MSFT", "GOOGL", "TMDX", "HIMS", "SNX", "STEP", "AMG", "ANET", "ASR", "EURN", "GBDC", "HASI", "MAIN", "NVO", "OLED", "SPG", "UE", "UTHR", "VRTX", "WPM"]
 stocklist = ["HIMS"]
+r = 5/100
 
-main(stocklist)
+main(stocklist, r)
