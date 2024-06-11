@@ -11,8 +11,11 @@ import os
 import shutil
 
 # Save to Excel with the first row and first column frozen, adjusted column widths, and defined as a table
-def printToExcel(symbol, results):
-    output_filename = f"Output/{symbol}.xlsx"
+def printToExcel(file_name, results=pd.DataFrame()):
+    if results.empty:
+        print("printToExcel: " + file_name + "'s results is empty")
+        return
+    output_filename = f"Output/{file_name}.xlsx"
     with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
         results.to_excel(writer, index=False, sheet_name='results')
         worksheet = writer.sheets['results']
@@ -43,7 +46,9 @@ def calcQuarterPerformance(closes, n):
     prices = closes.tail(length)                # Get the closing prices for the last `length` days
     pct_chg = prices.pct_change().dropna()      # Compute the daily percentage changes in closing prices
     perf_cum = (pct_chg + 1).cumprod() - 1      # Calculate the cumulative performance
-    return perf_cum.tail(1).item()              # Return the cumulative performance of the last day in this period
+
+    quarter_performance = perf_cum.tail(1).item()              # Return the cumulative performance of the last day in this period
+    return quarter_performance
 
 # Relative Strength (RS) Rating
 def calcRsRating(data):
@@ -53,14 +58,17 @@ def calcRsRating(data):
         quarters2 = calcQuarterPerformance(closes, 2)
         quarters3 = calcQuarterPerformance(closes, 3)
         quarters4 = calcQuarterPerformance(closes, 4)
-        return (0.4*quarters1 + 0.2*quarters2 + 0.2*quarters3 + 0.2*quarters4) * 100
+        rs_rating = (0.4*quarters1 + 0.2*quarters2 + 0.2*quarters3 + 0.2*quarters4) * 100
     except:
-        return 0
+        rs_rating = 0
+
+    return rs_rating
 
 # Earnings Per Share (EPS), a company's profitability per outstanding share of stock
 def calcEPS(financials, stock_info):
     net_income = financials.loc['Net Income', :].iloc[0]  # Assuming we want the latest net income
     outstanding_shares = stock_info['sharesOutstanding']
+
     earnings_per_share = net_income / outstanding_shares
     return earnings_per_share
 
@@ -69,6 +77,7 @@ def calcEarningsGrowth(financials):
     net_income  = financials.loc['Net Income']
     recent_earnings = net_income.iloc[0]
     year_ago_earnings = net_income.iloc[1]
+
     earnings_growth = ((recent_earnings - year_ago_earnings) / year_ago_earnings) * 100
     return earnings_growth
 
@@ -77,6 +86,7 @@ def calcSalesGrowth(financials):
     sales = financials.loc['Total Revenue']
     recent_sales = sales.iloc[0]
     year_ago_sales = sales.iloc[1]
+
     sales_growth = ((recent_sales - year_ago_sales) / year_ago_sales) * 100
     return sales_growth
 
@@ -86,6 +96,7 @@ def calcProfitMargin(financials):
     earnings = financials.loc['Net Income']
     recent_sales = sales.iloc[0]
     recent_earnings = earnings.iloc[0]
+
     profit_margin = (recent_earnings / recent_sales) * 100
     return profit_margin
 
@@ -93,6 +104,7 @@ def calcProfitMargin(financials):
 def calcROE(financials, balance_sheet):
     shareholders_equity = balance_sheet.loc['Stockholders Equity'].iloc[0]
     net_income = financials.loc['Net Income'].iloc[0]
+
     roe = (net_income / shareholders_equity) * 100
     return roe
 
@@ -102,12 +114,15 @@ def calcCompRating(financials, balance_sheet, rs_rating):
     sales_growth = calcSalesGrowth(financials)
     profit_margin = calcProfitMargin(financials)
     roe = calcROE(financials, balance_sheet)
-    return 0.25*rs_rating + 0.25*earnings_growth + 0.25*sales_growth + 0.125*profit_margin + 0.125*roe # Normalize and weight the metrics
+
+    comp_rating = 0.25*rs_rating + 0.25*earnings_growth + 0.25*sales_growth + 0.125*profit_margin + 0.125*roe # Normalize and weight the metrics
+    return comp_rating
 
 def getFinancialRatings(data, financials, balance_sheet, stock_info):
     rs_rating = calcRsRating(data)
     comp_rating = calcCompRating(financials, balance_sheet, rs_rating)
     eps = calcEPS(financials, stock_info)
+
     return rs_rating, comp_rating, eps
 
 def calcCurrentMovingAverages(data):
@@ -143,7 +158,8 @@ def isTrendTemplate(data):
     condition_6   = current_close >= (1.25 * low_of_52week)  # Price at least 25% above 52-week low
     condition_7   = current_close >= (0.75 * high_of_52week) # Price within 25% of 52-week high
 
-    return all([condition_1_1, condition_1_2, condition_2, condition_3, condition_4_1, condition_4_2, condition_5, condition_6, condition_7])
+    is_trend_template = all([condition_1_1, condition_1_2, condition_2, condition_3, condition_4_1, condition_4_2, condition_5, condition_6, condition_7])
+    return is_trend_template
 
 def isVCP(data, _window=5, volume_increase=2, price_increase=1.1):
     # Ensure Date is a column in the DataFrame
@@ -169,7 +185,9 @@ def isVCP(data, _window=5, volume_increase=2, price_increase=1.1):
     data["Pre_Burst_Pattern"] = data["Volatility<0.075"]
     data["Breakout"] = data["Price_Increase>" + str(price_increase)] & data["Volume_Increase>" + str(volume_increase)]
 
-    return data["Pre_Burst_Pattern"].iloc[-1], data["Breakout"].iloc[-1]
+    is_vcp_pattern = data["Pre_Burst_Pattern"].iloc[-1]
+    is_vcp_breakout = data["Breakout"].iloc[-1]
+    return is_vcp_pattern, is_vcp_breakout
 
 def getKpiAtDay(symbol, date_study):
     one_year_ago = date_study - timedelta(days=365)
@@ -199,10 +217,9 @@ def getKpiAtDay(symbol, date_study):
     return kpi_row
 
 def getKpiAtPeriod(symbol, start_date, end_date):
-    kpi_results = pd.DataFrame(columns=["Date", "RS_Rating", "Comp_Rating", "EPS", "isTrendTemplate", "isVcpPattern", "isVcpBreakout"])
-
-    date_study = start_date
     kpi_rows = []
+    
+    date_study = start_date
     while date_study <= end_date:
         print(f"Processing {symbol} at {date_study}")
 
@@ -210,25 +227,37 @@ def getKpiAtPeriod(symbol, start_date, end_date):
         kpi_rows.append(kpi_row)
 
         date_study += timedelta(days=1)
-
-    kpi_results = pd.concat([kpi_results, pd.DataFrame(kpi_rows)], ignore_index=True)
-    printToExcel(symbol, kpi_results)
-
+    
+    kpi_results = pd.DataFrame(kpi_rows)
     return kpi_results
 
 def determineBuyPoints(kpi_results):
     buy_points = []
 
-    #if is_trend_template & was_vcp_pattern & is_vcp_breakout:
-    #    buy_dates.append(date_study)
-
-    return buy_points
+    prev_row = None
+    for index, row in kpi_results.iterrows():
+        if prev_row is not None:
+            if row["isTrendTemplate"] and prev_row["isVcpPattern"] and row["isVcpBreakout"]:
+                buy_points.append(row["Date"])
+        prev_row = row
+    
+    if not buy_points:
+        print("determineBuyPoints: No buy points found")
+    else:
+        print("buy_points: ", buy_points)
+    
+    kpi_results["isBuyPoint"] = kpi_results["Date"].isin(buy_points)
+    return kpi_results
 
 def main(stocklist):
     folder_name = "Output"
-    if os.path.exists(folder_name):
-        shutil.rmtree(folder_name)
-    os.makedirs(folder_name)
+    try:
+        if os.path.exists(folder_name):
+            shutil.rmtree(folder_name)
+        os.makedirs(folder_name)
+    except:
+        print("CANNOT OPEN FOLDER: ", folder_name)
+        return
 
     _today = datetime.datetime.now()
     if _today.hour < 23 or (_today.hour == 23 and _today.minute < 1): # Israel Time After Hours
@@ -239,9 +268,11 @@ def main(stocklist):
 
     one_year_ago = _today - timedelta(days=30) # 365 - LIOR TO-DO
 
+    stocks_buy_points = []
     for symbol in stocklist:
         kpi_results = getKpiAtPeriod(symbol, one_year_ago, _today)
-        buy_points = determineBuyPoints(kpi_results)
+        kpi_results = determineBuyPoints(kpi_results)
+        printToExcel(symbol, kpi_results)
 
 # Define the stock list and date for the study
 #stocklist = ["AAPL", "MSFT", "GOOGL", "TMDX", "HIMS", "SNX", "STEP", "AMG", "ANET", "ASR", "EURN", "GBDC", "HASI", "MAIN", "NVO", "OLED", "SPG", "UE", "UTHR", "VRTX", "WPM"]
