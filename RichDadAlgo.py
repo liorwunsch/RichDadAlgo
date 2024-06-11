@@ -310,37 +310,49 @@ def determineSellPoints(kpi_results, r): # r(isk)
     addDatePriceEntries(kpi_results, partial_sell_points_2, "isSellPointPartial2", "SellPrice0.33")
     return kpi_results
 
-def calculateProfitPerTransaction(kpi_results, r): # r(isk)
-    transactions = []
+def addStockTransactions(symbol, transactions, kpi_results, r): # r(isk)
     viable_entries = kpi_results[(kpi_results["isBuyPointActual"] | kpi_results["isSellPointWhole"] |
                                    kpi_results["isSellPointPartial1"] | kpi_results["isSellPointPartial2"])]
     
     for index, row in viable_entries.iterrows():
         if row["isBuyPointActual"]:
             buy_price = row["BuyPrice"]
+            buy_date = row["Date"]
+
             sell_price = -1
 
-            if index + 1 < len(viable_entries): # last entry or before
-                next_row = viable_entries.iloc[index + 1]
+            try:
+                next_row = viable_entries.iloc[index-1 + 1]
                 if next_row["isSellPointWhole"]:
                     sell_price = next_row["SellPrice1.00"]
-
-            if sell_price == -1 and index + 2 < len(viable_entries): # two last entries or before
-                next_row = viable_entries.iloc[index + 1]
-                second_next_row = viable_entries.iloc[index + 2]
-                if next_row["isSellPointPartial1"] and second_next_row["isSellPointPartial2"]:
-                    sell_price = next_row["SellPrice0.67"] + second_next_row["SellPrice0.33"]
+                    sell_date = next_row["Date"]
+                else:
+                    second_next_row = viable_entries.iloc[index-1 + 2]
+                    if next_row["isSellPointPartial1"] and second_next_row["isSellPointPartial2"]:
+                        sell_price = next_row["SellPrice0.67"] + second_next_row["SellPrice0.33"]
+                        sell_date = second_next_row["Date"]
+            except:
+                print("index=", index-1, ", len=", len(viable_entries))
 
             if sell_price != -1:
-                profit_percent = (sell_price / buy_price)
+                profit_percent = (sell_price / buy_price) - 1
                 profit_r = profit_percent / r
-                transactions.append((profit_percent, profit_r, buy_price, sell_price))
+                tax_percent = profit_percent * (25/100)
+
+                transaction_row = {
+                    "Symbol": symbol,
+                    "Buy_Date": buy_date,
+                    "Sell_Date": sell_date,
+                    "Profit[%]": profit_percent * 100,
+                    "Profit_r": profit_r,
+                    "Tax[%]": tax_percent * 100
+                }
+                transactions.append(transaction_row)
 
     return transactions
 
-def summarizeKpiResults(symbol, kpi_results, r): # r(isk)
-    transactions = calculateProfitPerTransaction(kpi_results, r)
-    
+"""
+def summarizeStockActivity(transactions):
     profit_entries = [entry for entry in transactions if entry[0] > 0]
     successful_transactions_percent = len(profit_entries) / len(transactions) * 100
     
@@ -355,6 +367,7 @@ def summarizeKpiResults(symbol, kpi_results, r): # r(isk)
         "Final_Profit[%]":
     }
     return summary
+"""
 
 def main(stocklist, r):
     folder_name = "Output"
@@ -373,15 +386,21 @@ def main(stocklist, r):
     else:
         _today = datetime.datetime(_today.year, _today.month, _today.day, 23, 1)
 
-    one_year_ago = _today - timedelta(days=30) # 365 - LIOR TO-DO
+    one_year_ago = _today - timedelta(days=22) # 366 - LIOR TO-DO
 
+    transactions = []
     for symbol in stocklist:
         kpi_results = getKpiAtPeriod(symbol, one_year_ago, _today)
         kpi_results = determineBuyPoints(kpi_results)
         kpi_results = determineSellPoints(kpi_results, r)
         printToExcel(symbol, kpi_results)
 
-        summary = summarizeKpiResults(symbol, kpi_results, r)
+        transactions = addStockTransactions(symbol, transactions, kpi_results, r)
+    
+    transactions = pd.DataFrame(transactions)
+    printToExcel("zzTransactions", transactions)
+
+    #summarizeStockActivity()
 
 # Define the stock list and date for the study
 #stocklist = ["AAPL", "MSFT", "GOOGL", "TMDX", "HIMS", "SNX", "STEP", "AMG", "ANET", "ASR", "EURN", "GBDC", "HASI", "MAIN", "NVO", "OLED", "SPG", "UE", "UTHR", "VRTX", "WPM"]
