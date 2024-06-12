@@ -182,7 +182,7 @@ def calcCurrentMovingAverages(data):
     return ma_20, ma_50, ma_70, ma_150, ma_200, ma_200_20
 
 def isTrendTemplate(data):
-    current_close = data["Close"].iloc[-1] # -1 is for the last value
+    close = data["Close"].iloc[-1] # -1 is for the last value
 
     ma_20, ma_50, ma_70, ma_150, ma_200, ma_200_20 = calcCurrentMovingAverages(data)
     
@@ -190,15 +190,18 @@ def isTrendTemplate(data):
     high_of_52week = max(data["Close"].iloc[-252:])
 
     # Condition checks for stock selection
-    condition_1_1 = current_close > ma_150                   # Price > 150-day (30-week) MA
-    condition_1_2 = current_close > ma_200                   # Price > 200-day (40-week) MA
-    condition_2   = ma_150 > ma_200                         # 150-day MA > 200-day MA
-    condition_3   = ma_200 > ma_200_20                      # 200-day MA trending up for at least 1 month (22 days)
-    condition_4_1 = ma_50 > ma_150                          # 50-day MA > 150-day MA
-    condition_4_2 = ma_50 > ma_200                          # 50-day MA > 200-day MA
-    condition_5   = current_close > ma_50                    # Price above 50-day MA
-    condition_6   = current_close >= (1.25 * low_of_52week)  # Price at least 25% above 52-week low
-    condition_7   = current_close >= (0.75 * high_of_52week) # Price within 25% of 52-week high
+    condition_1_1 = close > ma_150                   # Price > 150-day (30-week) MA
+    condition_1_2 = close > ma_200                   # Price > 200-day (40-week) MA
+    condition_2   = ma_150 > ma_200                  # 150-day MA > 200-day MA
+    condition_3   = ma_200 > ma_200_20               # 200-day MA trending up for at least 1 month (22 days)
+    condition_4_1 = ma_50 > ma_150                   # 50-day MA > 150-day MA
+    condition_4_2 = ma_50 > ma_200                   # 50-day MA > 200-day MA
+    condition_5   = close > ma_50                    # Price above 50-day MA
+    condition_6   = close >= (1.25 * low_of_52week)  # Price at least 25% above 52-week low
+    condition_7   = close >= (0.75 * high_of_52week) # Price within 25% of 52-week high
+
+    #print([condition_1_1, condition_1_2, condition_2, condition_3, condition_4_1, condition_4_2, condition_5, condition_6, condition_7])
+    #sys.exit()
 
     is_trend_template = all([condition_1_1, condition_1_2, condition_2, condition_3, condition_4_1, condition_4_2, condition_5, condition_6, condition_7])
     return is_trend_template
@@ -434,7 +437,7 @@ def main(stocklist, r, num_days_back, tz):
     start_date = _today - timedelta(days=num_days_back+1) # +1 for isVcpPattern of oldest entry
     end_date = _today
 
-    #start_date = datetime.datetime(year=2024, month=6, day=9)
+    #start_date = datetime.datetime(year=2024, month=5, day=3)
 
     transactions = []
     for symbol in stocklist:
@@ -451,7 +454,7 @@ def main(stocklist, r, num_days_back, tz):
     #summarizeStockActivity()
 
 # Define the stock list and date for the study
-stocklist = ["TMDX"]#, "HIMS", "AAPL", "TRI", "MKL", "PINS", "QTWO"]
+stocklist = ["AAPL"]
 r = 5/100
 num_days_back = 365
 tz = "Asia/Jerusalem"
