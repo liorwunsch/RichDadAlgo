@@ -1,11 +1,13 @@
+import sys
 import yfinance as yf
 import pandas as pd 
 import numpy as np
+import math
 import datetime
 from datetime import timedelta
-import time 
+import time
+import pytz
 from openpyxl.utils import get_column_letter
-from openpyxl import Workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 import os
 import shutil
@@ -15,8 +17,13 @@ def printToExcel(file_name, results=pd.DataFrame()):
     if results.empty:
         print("printToExcel: " + file_name + "'s results is empty")
         return
+
     output_filename = f"Output/{file_name}.xlsx"
     with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
+        print(results)
+        if "Date" in results.columns:
+            results['Date'] = results['Date'].dt.tz_localize(None)
+        
         results.to_excel(writer, index=False, sheet_name='results')
         worksheet = writer.sheets['results']
         worksheet.freeze_panes = 'B2'
@@ -39,6 +46,39 @@ def printToExcel(file_name, results=pd.DataFrame()):
         tab.tableStyleInfo = style
         worksheet.add_table(tab)
     print(f"results saved to {output_filename}")
+
+def getLastCloseDate(tz, ny_close_hour=16, ny_close_minute=0):
+    tz1 = pytz.timezone(tz)
+    tz2 = pytz.timezone('America/New_York')
+    _today = datetime.datetime.now()
+    time1 = tz1.localize(_today)
+    time2 = tz2.localize(_today)
+    time_difference = (time2 - time1).total_seconds() / 3600
+    time_difference_hours = math.floor(time_difference)
+    time_difference_minutes = (int)((time_difference - time_difference_hours) * 60)
+
+    # NYSE and NASDAQ After Hours at TimeZone tz
+    close_time = datetime.datetime(_today.year, _today.month, _today.day, ny_close_hour, ny_close_minute)
+    local_close_time = close_time + timedelta(hours=time_difference_hours, minutes=(time_difference_minutes + 1))
+
+    if _today < local_close_time:
+        _today = local_close_time - timedelta(days=1)
+    else:
+        _today = local_close_time
+
+    _today = _today.replace(hour=0, minute=0)
+    #print(f"last_close_date = {_today}")
+    return _today
+
+# Determine dates when the stock exchange was open so calculation won't have duplicates
+def determineActiveDates(symbol, start_date, end_date):
+    data = yf.Ticker(symbol)
+    data = data.history(start=start_date, end=end_date)
+    data = data.drop_duplicates()
+
+    active_dates = data.index
+    active_dates = active_dates.tolist()
+    return active_dates
 
 # Cumulative performance over the last `n` quarters
 def calcQuarterPerformance(closes, n):
@@ -161,6 +201,7 @@ def isTrendTemplate(data):
     is_trend_template = all([condition_1_1, condition_1_2, condition_2, condition_3, condition_4_1, condition_4_2, condition_5, condition_6, condition_7])
     return is_trend_template
 
+# **5** Days Back
 def isVCP(data, _window=5, volume_increase_condition=1.75, price_increase_condition=1.05):
     # Ensure Date is a column in the DataFrame
     data.reset_index(inplace=True)
@@ -198,7 +239,8 @@ def getKpiAtDay(symbol, date_study):
     financials = data.financials
     balance_sheet = data.balance_sheet
     stock_info = data.info
-    data = data.history(start=one_year_ago, end=date_study)
+    data = data.history(start=one_year_ago, end=date_study+timedelta(days=1)) # +1 for data of today's afterhours and not yesterday's
+    data = data.drop_duplicates()
     
     time.sleep(0.01)  # Pause to avoid hitting API limits
     data.reset_index(inplace=True) # Ensure Date is a column in the DataFrame
@@ -224,15 +266,14 @@ def getKpiAtDay(symbol, date_study):
 # output: (getKpiAtDay) kpi_row(s)
 def getKpiAtPeriod(symbol, start_date, end_date):
     kpi_rows = []
+    active_dates = determineActiveDates(symbol, start_date, end_date)
+    #print(f"active_dates = {active_dates}")
     
-    date_study = start_date
-    while date_study <= end_date:
-        print(f"Processing {symbol} at {date_study}")
+    for date_study in active_dates:
+        print(f"Processing {symbol} at {date_study} EST")
 
         kpi_row = getKpiAtDay(symbol, date_study)
         kpi_rows.append(kpi_row)
-
-        date_study += timedelta(days=1)
     
     kpi_results = pd.DataFrame(kpi_rows)
     return kpi_results
@@ -255,6 +296,7 @@ def determineBuyPoints(kpi_results):
     kpi_results["isBuyPoint"] = kpi_results["Date"].isin(buy_points)
     return kpi_results
 
+# For Buy and Sell points
 def addDatePriceEntries(kpi_results, date_price_entries, ispoint_col, price_col):
     # Initialize columns if not already present
     if ispoint_col not in kpi_results.columns:
@@ -379,7 +421,7 @@ def summarizeStockActivity(transactions):
     return summary
 """
 
-def main(stocklist, r):
+def main(stocklist, r, num_days_back, tz):
     folder_name = "Output"
     try:
         if os.path.exists(folder_name):
@@ -389,18 +431,13 @@ def main(stocklist, r):
         print("CANNOT OPEN FOLDER: ", folder_name)
         return
 
-    _today = datetime.datetime.now()
-    if _today.hour < 23 or (_today.hour == 23 and _today.minute < 1): # Israel Time After Hours
-        yesterday_ = _today - timedelta(days=1)
-        _today = datetime.datetime(yesterday_.year, yesterday_.month, yesterday_.day, 23, 1)
-    else:
-        _today = datetime.datetime(_today.year, _today.month, _today.day, 23, 1)
-
-    one_year_ago = _today - timedelta(days=23) # 41 # 366 - LIOR TO-DO
+    _today = getLastCloseDate(tz)
+    start_date = _today - timedelta(days=num_days_back+1) # +1 for isVcpPattern of oldest entry
+    end_date = _today
 
     transactions = []
     for symbol in stocklist:
-        kpi_results = getKpiAtPeriod(symbol, one_year_ago, _today)
+        kpi_results = getKpiAtPeriod(symbol, start_date, end_date)
         kpi_results = determineBuyPoints(kpi_results)
         kpi_results = determineSellPoints(kpi_results, r)
         printToExcel(symbol, kpi_results)
@@ -413,7 +450,9 @@ def main(stocklist, r):
     #summarizeStockActivity()
 
 # Define the stock list and date for the study
-stocklist = ["HIMS"]
+stocklist = ["TMDX"]#, "HIMS", "AAPL", "TRI", "MKL", "PINS", "QTWO", "USFD"]
 r = 5/100
+num_days_back = 5 # 41 # 365 - LIOR TO-DO
+tz = "Asia/Jerusalem"
 
-main(stocklist, r)
+main(stocklist, r, num_days_back, tz)

@@ -6,3 +6,7 @@ RichDadAlgo is a Python-based tool for screening stocks and finding buying point
 Happy trading! 🚀📈
 
 <sub>I'm not a financial advisor and can't be held responsible for any actions you take based on my advice.</sub>
+
+```bash
+pip install -r requirements.txt
+```
