@@ -20,7 +20,6 @@ def printToExcel(file_name, results=pd.DataFrame()):
 
     output_filename = f"Output/{file_name}.xlsx"
     with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
-        print(results)
         if "Date" in results.columns:
             results['Date'] = results['Date'].dt.tz_localize(None)
         
@@ -73,11 +72,14 @@ def getLastCloseDate(tz, ny_close_hour=16, ny_close_minute=0):
 # Determine dates when the stock exchange was open so calculation won't have duplicates
 def determineActiveDates(symbol, start_date, end_date):
     data = yf.Ticker(symbol)
-    data = data.history(start=start_date, end=end_date)
+    data = data.history(start=start_date, end=end_date+timedelta(days=1)) # +1 for data of today's afterhours and not yesterday's
     data = data.drop_duplicates()
 
     active_dates = data.index
     active_dates = active_dates.tolist()
+    #print(f"end_date = {end_date}")
+    #print(f"active_dates = {active_dates}")
+    #sys.exit()
     return active_dates
 
 # Cumulative performance over the last `n` quarters
@@ -241,8 +243,6 @@ def getKpiAtDay(symbol, date_study):
     stock_info = data.info
     data = data.history(start=one_year_ago, end=date_study+timedelta(days=1)) # +1 for data of today's afterhours and not yesterday's
     data = data.drop_duplicates()
-    
-    time.sleep(0.01)  # Pause to avoid hitting API limits
     data.reset_index(inplace=True) # Ensure Date is a column in the DataFrame
     
     rs_rating, comp_rating, eps = getFinancialRatings(data, financials, balance_sheet, stock_info)
@@ -267,7 +267,6 @@ def getKpiAtDay(symbol, date_study):
 def getKpiAtPeriod(symbol, start_date, end_date):
     kpi_rows = []
     active_dates = determineActiveDates(symbol, start_date, end_date)
-    #print(f"active_dates = {active_dates}")
     
     for date_study in active_dates:
         print(f"Processing {symbol} at {date_study} EST")
@@ -435,6 +434,8 @@ def main(stocklist, r, num_days_back, tz):
     start_date = _today - timedelta(days=num_days_back+1) # +1 for isVcpPattern of oldest entry
     end_date = _today
 
+    #start_date = datetime.datetime(year=2024, month=6, day=9)
+
     transactions = []
     for symbol in stocklist:
         kpi_results = getKpiAtPeriod(symbol, start_date, end_date)
@@ -450,9 +451,9 @@ def main(stocklist, r, num_days_back, tz):
     #summarizeStockActivity()
 
 # Define the stock list and date for the study
-stocklist = ["TMDX"]#, "HIMS", "AAPL", "TRI", "MKL", "PINS", "QTWO", "USFD"]
+stocklist = ["TMDX"]#, "HIMS", "AAPL", "TRI", "MKL", "PINS", "QTWO"]
 r = 5/100
-num_days_back = 5 # 41 # 365 - LIOR TO-DO
+num_days_back = 365
 tz = "Asia/Jerusalem"
 
 main(stocklist, r, num_days_back, tz)
