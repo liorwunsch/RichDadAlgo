@@ -12,6 +12,28 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 import os
 import shutil
 
+def readStockList():
+    file_name = 'stocks.txt'
+    with open(file_name, 'r') as file:
+        stocklist = file.readlines()
+    stocklist = [line.strip() for line in stocklist] # Remove newline characters from each line
+    stocklist = list(set(stocklist))
+    stocklist.sort()
+
+    print(stocklist)
+    return stocklist
+
+def createOutputFolder():
+    folder_name = "Output"
+    try:
+        if os.path.exists(folder_name):
+            shutil.rmtree(folder_name)
+        os.makedirs(folder_name)
+    except:
+        print("CANNOT OPEN FOLDER: ", folder_name)
+        return False
+    return True
+    
 # Save to Excel with the first row and first column frozen, adjusted column widths, and defined as a table
 def printToExcel(file_name, results=pd.DataFrame()):
     if results.empty:
@@ -424,13 +446,9 @@ def summarizeStockActivity(transactions):
 """
 
 def main(stocklist, r, num_days_back, tz):
-    folder_name = "Output"
-    try:
-        if os.path.exists(folder_name):
-            shutil.rmtree(folder_name)
-        os.makedirs(folder_name)
-    except:
-        print("CANNOT OPEN FOLDER: ", folder_name)
+    if not stocklist:
+        stocklist = readStockList()
+    if not createOutputFolder():
         return
 
     _today = getLastCloseDate(tz)
@@ -454,7 +472,7 @@ def main(stocklist, r, num_days_back, tz):
     #summarizeStockActivity()
 
 # Define the stock list and date for the study
-stocklist = ["AAPL"]
+stocklist = []
 r = 5/100
 num_days_back = 365
 tz = "Asia/Jerusalem"
