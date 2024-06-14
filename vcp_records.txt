@@ -1,21 +1,22 @@
-Symbol ; BreakoutDate ; BuyDate     ; LimitPrice ; Recognized
-AAPL   ; 11-Jun-2024  ;             ;            ; True NonTemplate
-HEI    ; 31-May-2024  ;             ;            ; False
-HIMS   ; 20-May-2024  ; 14-May-2024 ; 13.64      ; True
-WMT    ; 16-May-2024  ;             ;            ; True
-ELAN   ; 08-May-2024  ;             ;            ; True
-AAPL   ; 03-May-2024  ;             ;            ; True NonTemplate
-TRI    ; 02-May-2024  ;             ;            ; True
-MKL    ; 02-May-2024  ;             ;            ; True NonTemplate
-QTWO   ; 02-May-2024  ;             ;            ; True
-TMDX   ; 01-May-2024  ; 29-Apr-2024 ; 95.70      ; True
-PINS   ; 01-May-2024  ;             ;            ; True
-TGT    ; 05-Mar-2024  ;             ;            ; True NonTemplate
-QTWO   ; 22-Feb-2024  ;             ;            ; True
-USFD   ; 15-Feb-2024  ;             ;            ; False
-EMR    ; 07-Feb-2024  ;             ;            ; True
-ELAN   ; 05-Feb-2024  ;             ;            ; True
-AMZN   ; 02-Feb-2024  ;             ;            ; True
-META   ; 02-Feb-2024  ;             ;            ; True
+Symbol ; BreakoutDate ; Recognized       ; BuyDate     ; LimitPrice  ; Template(T after F) & VCP (T after T)
+AAPL   ; 11-Jun-2024  ; True NonTemplate ;             ;             ;
+HEI    ; 31-May-2024  ; False            ; 29-May-2024 ; 219.35      ;
+HIMS   ; 20-May-2024  ; True             ; 14-May-2024 ; 13.64       ; 16-May-2024
+WMT    ; 16-May-2024  ; True             ; 07-May-2024 ; 60.39       ;
+ELAN   ; 08-May-2024  ; True             ; 08-May-2024 ; 13.84   Gap ;
+EMR    ; 08-May-2024  ; ?                ; 08-May-2024 ; 110.76      ;
+AAPL   ; 03-May-2024  ; True NonTemplate ;             ;             ;
+TRI    ; 02-May-2024  ; True             ; 02-May-2024 ; 154.72      ;
+MKL    ; 02-May-2024  ; True NonTemplate ; 02-May-2024 ; 1486.64 Gap ;
+QTWO   ; 02-May-2024  ; True             ; 02-May-2024 ; 54.50   Gap ;
+TMDX   ; 01-May-2024  ; True             ; 29-Apr-2024 ; 95.70       ; 26-Apr-2024
+PINS   ; 01-May-2024  ; True             ; 01-May-2024 ; 37.27   Gap ;
+TGT    ; 05-Mar-2024  ; True NonTemplate ; 23-Feb-2024 ; 152.11      ;
+QTWO   ; 22-Feb-2024  ; True             ; 22-Feb-2024 ; 44.83       ;
+USFD   ; 15-Feb-2024  ; False            ; 12-Feb-2024 ; 47.48       ;
+EMR    ; 07-Feb-2024  ; True             ; 07-Feb-2024 ; 96.74   Gap ;
+ELAN   ; 05-Feb-2024  ; True             ; 05-Feb-2024 ; 15.33   Gap ;
+AMZN   ; 02-Feb-2024  ; True             ; 24-Jan-2024 ; 157.17      ;
+META   ; 02-Feb-2024  ; True             ; 19-Jan-2024 ; 377.06  Gap ;
 
 ירידה של יום אחד לא נחשב
