@@ -94,10 +94,10 @@ def getLastCloseDate(tz, ny_close_hour=16, ny_close_minute=0):
 # Determine dates when the stock exchange was open so calculation won't have duplicates
 def determineActiveDates(symbol, start_date, end_date):
     data = yf.Ticker(symbol)
-    data = data.history(start=start_date, end=end_date+timedelta(days=1)) # +1 for data of today's afterhours and not yesterday's
-    data = data.drop_duplicates()
+    hist = data.history(start=start_date, end=end_date+timedelta(days=1)) # +1 for data of today's afterhours and not yesterday's
+    hist = hist.drop_duplicates()
 
-    active_dates = data.index
+    active_dates = hist.index
     active_dates = active_dates.tolist()
     #print(f"end_date = {end_date}")
     #print(f"active_dates = {active_dates}")
@@ -115,8 +115,8 @@ def calcQuarterPerformance(closes, n):
     return quarter_performance
 
 # Relative Strength (RS) Rating
-def calcRsRating(data):
-    closes = data["Close"].iloc[-252:]
+def calcRsRating(hist):
+    closes = hist["Close"].iloc[-252:]
     try:
         quarters1 = calcQuarterPerformance(closes, 1)
         quarters2 = calcQuarterPerformance(closes, 2)
@@ -182,8 +182,8 @@ def calcCompRating(financials, balance_sheet, rs_rating):
     comp_rating = 0.25*rs_rating + 0.25*earnings_growth + 0.25*sales_growth + 0.125*profit_margin + 0.125*roe # Normalize and weight the metrics
     return comp_rating
 
-def getFinancialRatings(data, financials, balance_sheet, stock_info):
-    rs_rating = calcRsRating(data)
+def getFinancialRatings(hist, financials, balance_sheet, stock_info):
+    rs_rating = calcRsRating(hist)
     comp_rating = calcCompRating(financials, balance_sheet, rs_rating)
     eps = calcEPS(financials, stock_info)
 
@@ -203,80 +203,158 @@ def calcCurrentMovingAverages(data):
 
     return ma_20, ma_50, ma_70, ma_150, ma_200, ma_200_20
 
-def isTrendTemplate(data):
-    close = data["Close"].iloc[-1] # -1 is for the last value
+def isTrendTemplateSimple(hist):
+    close = hist["Close"].iloc[-1] # -1 is for the last value
 
-    ma_20, ma_50, ma_70, ma_150, ma_200, ma_200_20 = calcCurrentMovingAverages(data)
+    ma_20, ma_50, ma_70, ma_150, ma_200, ma_200_20 = calcCurrentMovingAverages(hist)
     
-    low_of_52week = min(data["Close"].iloc[-252:])
-    high_of_52week = max(data["Close"].iloc[-252:])
+    high_of_52week = max(hist["Close"].iloc[-252:])
+    low_of_52week = min(hist["Close"].iloc[-252:])
 
     # Condition checks for stock selection
-    condition_1_1 = close > ma_150                   # Price > 150-day (30-week) MA
-    condition_1_2 = close > ma_200                   # Price > 200-day (40-week) MA
-    condition_2   = ma_150 > ma_200                  # 150-day MA > 200-day MA
-    condition_3   = ma_200 > ma_200_20               # 200-day MA trending up for at least 1 month (22 days)
-    condition_4_1 = ma_50 > ma_150                   # 50-day MA > 150-day MA
-    condition_4_2 = ma_50 > ma_200                   # 50-day MA > 200-day MA
-    condition_5   = close > ma_50                    # Price above 50-day MA
-    condition_6   = close >= (1.25 * low_of_52week)  # Price at least 25% above 52-week low
-    condition_7   = close >= (0.75 * high_of_52week) # Price within 25% of 52-week high
+    condition_1_1 = close > ma_150                 # Price > 150-day (30-week) MA
+    condition_1_2 = close > ma_200                 # Price > 200-day (40-week) MA
+    condition_2 = ma_150 > ma_200                  # 150-day MA > 200-day MA
+    condition_3 = ma_200 > ma_200_20               # 200-day MA trending up for at least 1 month (22 days)
+    condition_4_1 = ma_50 > ma_150                 # 50-day MA > 150-day MA
+    condition_4_2 = ma_50 > ma_200                 # 50-day MA > 200-day MA
+    condition_5 = close > ma_50                    # Price above 50-day MA
+    condition_6 = close >= (0.75 * high_of_52week) # Price within 25% of 52-week high
+    condition_7 = close >= (1.25 * low_of_52week)  # Price at least 25% above 52-week low
 
-    #print([condition_1_1, condition_1_2, condition_2, condition_3, condition_4_1, condition_4_2, condition_5, condition_6, condition_7])
-    #sys.exit()
-
-    is_trend_template = all([condition_1_1, condition_1_2, condition_2, condition_3, condition_4_1, condition_4_2, condition_5, condition_6, condition_7])
+    is_trend_template = condition_1_1 & condition_1_2 & condition_2 & condition_3 & condition_4_1 & condition_4_2 & condition_5 & condition_6 & condition_7
     return is_trend_template
 
-# **5** Days Back
-def isVCP(data, _window=5, volume_increase_condition=1.75, price_increase_condition=1.05):
+def isTrendTemplateExponential(data, date_study):
+    two_year_ago = date_study - timedelta(days=730)
+    hist = data.history(start=two_year_ago, end=date_study+timedelta(days=1)) # +1 for data of today's afterhours and not yesterday's
+    hist = hist.drop_duplicates()
+    hist.reset_index(inplace=True) # Ensure Date is a column in the DataFrame
+    if not isinstance(hist.index, pd.DatetimeIndex): # Ensure the index is a DatetimeIndex
+        hist.index = pd.to_datetime(hist["Date"])
+    
+    hist['EMA50'] = hist['Close'].ewm(span=50, adjust=False).mean()
+    hist['EMA150'] = hist['Close'].ewm(span=150, adjust=False).mean()
+    hist['EMA200'] = hist['Close'].ewm(span=200, adjust=False).mean()
+    hist['EMA200_back1m'] = hist['EMA200'].shift(21)
+    hist['vEMA20'] = hist['Volume'].ewm(span=20, adjust=False).mean()
+
+    # Weekly
+    week_hist = hist['Close'].resample('W').ohlc() # week ending on sunday
+    week_hist['Low_1'] = hist['Low'].resample('W').min()
+    week_hist.reset_index(inplace=True) # Ensure Date is a column in the DataFrame
+    if not isinstance(week_hist.index, pd.DatetimeIndex): # Ensure the index is a DatetimeIndex
+        week_hist.index = pd.to_datetime(week_hist["Date"])
+    
+    #print("data['Low'] = ", data['Low'])
+    #print("data['High'] = ", data['High'])
+    #print("weekly_data = ", weekly_data)
+    #sys.exit()
+
+    weekly_max = week_hist['close'].rolling(window=52).max() # max close over 52 weeks
+    weekly_min = week_hist['Low_1'].rolling(window=52).min() # min low over 52 weeks
+
+    # first of two_years_ago not needed anymore
+    week_hist = week_hist.iloc[51:]
+    hist = hist.iloc[251:]
+
+    week_hist['Bracket_Max'] = weekly_max * 1.25
+    week_hist['Bracket_Min'] = weekly_min * 1.3
+
+    #printToExcel("weekly_hist", week_hist)
+    #sys.exit()
+
+    #week_hist.at[week_hist.index[0], 'Bracket_Max'] = 123
+
+    # Resample weekly data to daily and forward fill to align with daily data
+    daily_bracket_max = week_hist['Bracket_Max'].resample('D').ffill()
+    daily_bracket_min = week_hist['Bracket_Min'].resample('D').ffill()
+
+    #print("daily_bracket_max = ", daily_bracket_max)
+    #print("daily_bracket_min = ", daily_bracket_min)
+    #sys.exit()
+
+    # Align the length of daily_bracket_* with data['Close']
+    hist['daily_bracket_max'] = daily_bracket_max.reindex(hist.index, method='ffill')
+    hist['daily_bracket_min'] = daily_bracket_min.reindex(hist.index, method='ffill')
+
+    #print('daily_bracket_max after = ', daily_bracket_max)
+    #print('daily_bracket_min after = ', daily_bracket_min)
+    #sys.exit()
+
+    condition_1 = hist['Close'] >= hist['EMA150']
+    condition_2 = hist['Close'] >= hist['EMA200']
+    condition_3 = hist['EMA150'] >= hist['EMA200']
+    condition_4 = hist['EMA200'] > hist['EMA200_back1m']
+    condition_5 = hist['EMA50'] > hist['EMA150']
+    condition_6 = hist['EMA50'] > hist['EMA200']
+    condition_7 = hist['Close'] > hist['EMA50']
+    condition_8 = hist['Close'] <= hist['daily_bracket_max']
+    condition_9 = hist['Close'] >= hist['daily_bracket_min']
+    condition_10 = hist["Volume"] >= hist['vEMA20']
+
+    is_trend_template_exp = condition_1 & condition_2 & condition_3 & condition_4 & condition_5 & condition_6 & condition_7 & condition_8 & condition_9 & condition_10
+    #hist['is_trend_template_exp'] = is_trend_template_exp
+    #printToExcel("hist", hist)
+    #sys.exit()
+
+    #screened_data = data[is_trend_template_exp]
+    return is_trend_template_exp
+
+def isTrendTemplate(data, hist, date_study, is_exponential):
+    if not is_exponential:
+        return isTrendTemplateSimple(hist)
+    return isTrendTemplateExponential(data, date_study)
+
+# **5** trading days Back
+def isVCP(hist, _window=5, volume_increase_condition=1.75, price_increase_condition=1.05):
     # Ensure Date is a column in the DataFrame
-    data.reset_index(inplace=True)
+    hist.reset_index(inplace=True)
 
     # Calculate moving averages for price and volume
-    data["MA_Price"] = data["Close"].rolling(window=_window).mean()
-    data["MA_Volume"] = data["Volume"].rolling(window=_window).mean()
+    hist["MA_Price"] = hist["Close"].rolling(window=_window).mean()
+    hist["MA_Volume"] = hist["Volume"].rolling(window=_window).mean()
     
     # Detect periods of relatively low volatility (price stable around MA_Price)
-    data["Volatility"] = np.abs(data["Close"] - data["MA_Price"]) / data["MA_Price"]
-    data["Volatility<0.075"] = data["Volatility"] < 0.075
+    hist["Volatility"] = np.abs(hist["Close"] - hist["MA_Price"]) / hist["MA_Price"]
+    hist["Volatility<0.075"] = hist["Volatility"] < 0.075
     
     # Detect significant volume increase
-    data["Volume_Increase"] = data["Volume"] / data["MA_Volume"]
-    data["Volume_Increase>" + str(volume_increase_condition)] = data["Volume_Increase"] > volume_increase_condition
+    hist["Volume_Increase"] = hist["Volume"] / hist["MA_Volume"]
+    hist["Volume_Increase>" + str(volume_increase_condition)] = hist["Volume_Increase"] > volume_increase_condition
     
     # Detect significant price increase
-    data["Price_Increase"] = data["Close"] / data["Close"].shift(1)
-    data["Price_Increase>" + str(price_increase_condition)] = data["Price_Increase"] > price_increase_condition
+    hist["Price_Increase"] = hist["Close"] / hist["Close"].shift(1)
+    hist["Price_Increase>" + str(price_increase_condition)] = hist["Price_Increase"] > price_increase_condition
     
     # Combine conditions to detect pre-burst (vcp) pattern
-    data["Pre_Burst_Pattern"] = data["Volatility<0.075"]
-    data["Breakout"] = data["Price_Increase>" + str(price_increase_condition)] & data["Volume_Increase>" + str(volume_increase_condition)]
+    hist["Pre_Burst_Pattern"] = hist["Volatility<0.075"]
+    hist["Breakout"] = hist["Price_Increase>" + str(price_increase_condition)] & hist["Volume_Increase>" + str(volume_increase_condition)]
 
-    is_vcp_pattern = data["Pre_Burst_Pattern"].iloc[-1]
-    is_vcp_breakout = data["Breakout"].iloc[-1]
-    price_increase = data["Price_Increase"].iloc[-1]
-    volume_increase = data["Volume_Increase"].iloc[-1]
+    is_vcp_pattern = hist["Pre_Burst_Pattern"].iloc[-1]
+    is_vcp_breakout = hist["Breakout"].iloc[-1]
+    price_increase = hist["Price_Increase"].iloc[-1]
+    volume_increase = hist["Volume_Increase"].iloc[-1]
     return is_vcp_pattern, is_vcp_breakout, price_increase, volume_increase
 
-def getKpiAtDay(symbol, date_study):
+def getKpiAtDay(symbol, date_study, b_check_trend_exponential):
     one_year_ago = date_study - timedelta(days=365)
     data = yf.Ticker(symbol)
     
     financials = data.financials
     balance_sheet = data.balance_sheet
     stock_info = data.info
-    data = data.history(start=one_year_ago, end=date_study+timedelta(days=1)) # +1 for data of today's afterhours and not yesterday's
-    data = data.drop_duplicates()
-    data.reset_index(inplace=True) # Ensure Date is a column in the DataFrame
+    hist = data.history(start=one_year_ago, end=date_study+timedelta(days=1)) # +1 for data of today's afterhours and not yesterday's
+    hist = hist.drop_duplicates()
+    hist.reset_index(inplace=True) # Ensure Date is a column in the DataFrame
     
-    rs_rating, comp_rating, eps = getFinancialRatings(data, financials, balance_sheet, stock_info)
-    is_trend_template = isTrendTemplate(data)
-    is_vcp_pattern, is_vcp_breakout, price_increase, volume_increase = isVCP(data)
+    rs_rating, comp_rating, eps = getFinancialRatings(hist, financials, balance_sheet, stock_info)
+    is_trend_template = isTrendTemplate(data, hist, date_study, b_check_trend_exponential)
+    is_vcp_pattern, is_vcp_breakout, price_increase, volume_increase = isVCP(hist)
 
     kpi_row = {
         "Date": date_study,
-        "Close": data["Close"].iloc[-1],
+        "Close": hist["Close"].iloc[-1],
         "PriceIncrease": price_increase,
         "VolumeIncrease": volume_increase,
         "RS_Rating": rs_rating,
@@ -289,14 +367,14 @@ def getKpiAtDay(symbol, date_study):
     return kpi_row
 
 # output: (getKpiAtDay) kpi_row(s)
-def getKpiAtPeriod(symbol, start_date, end_date):
+def getKpiAtPeriod(symbol, start_date, end_date, b_check_trend_exponential):
     kpi_rows = []
     active_dates = determineActiveDates(symbol, start_date, end_date)
     
     for date_study in active_dates:
         print(f"Processing {symbol} at {date_study} EST")
 
-        kpi_row = getKpiAtDay(symbol, date_study)
+        kpi_row = getKpiAtDay(symbol, date_study, b_check_trend_exponential)
         kpi_rows.append(kpi_row)
     
     kpi_results = pd.DataFrame(kpi_rows)
@@ -445,7 +523,7 @@ def summarizeStockActivity(transactions):
     return summary
 """
 
-def main(stocklist, r, num_days_back, tz):
+def main(stocklist, r, num_days_back, tz, b_check_trend_exponential):
     if not stocklist:
         stocklist = readStockList()
     if not createOutputFolder():
@@ -455,11 +533,11 @@ def main(stocklist, r, num_days_back, tz):
     start_date = _today - timedelta(days=num_days_back+1) # +1 for isVcpPattern of oldest entry
     end_date = _today
 
-    #start_date = datetime.datetime(year=2024, month=5, day=3)
+    #start_date = datetime.datetime(year=2024, month=1, day=18)
 
     transactions = []
     for symbol in stocklist:
-        kpi_results = getKpiAtPeriod(symbol, start_date, end_date)
+        kpi_results = getKpiAtPeriod(symbol, start_date, end_date, b_check_trend_exponential)
         kpi_results = determineBuyPoints(kpi_results)
         kpi_results = determineSellPoints(kpi_results, r)
         printToExcel(symbol, kpi_results)
@@ -473,8 +551,10 @@ def main(stocklist, r, num_days_back, tz):
 
 # Define the stock list and date for the study
 stocklist = []
+#stocklist = ["AAPL","HEI","HIMS","WMT","ELAN","EMR","TRI","MKL","QTWO","TMDX","PINS","TGT","USFD","AMZN","META"]
 r = 5/100
 num_days_back = 365
 tz = "Asia/Jerusalem"
+b_check_trend_exponential = True
 
-main(stocklist, r, num_days_back, tz)
+main(stocklist, r, num_days_back, tz, b_check_trend_exponential)
