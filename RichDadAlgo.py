@@ -19,8 +19,6 @@ def readStockList():
     stocklist = [line.strip() for line in stocklist] # Remove newline characters from each line
     stocklist = list(set(stocklist))
     stocklist.sort()
-
-    print(stocklist)
     return stocklist
 
 def createOutputFolder():
@@ -42,8 +40,8 @@ def printToExcel(file_name, results=pd.DataFrame()):
 
     output_filename = f"Output/{file_name}.xlsx"
     with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
-        if "Date" in results.columns:
-            results['Date'] = results['Date'].dt.tz_localize(None)
+        #if "Date" in results.columns:
+        #    results['Date'] = results['Date'].dt.tz_localize(None)
         
         results.to_excel(writer, index=False, sheet_name='results')
         worksheet = writer.sheets['results']
@@ -203,6 +201,7 @@ def calcCurrentMovingAverages(data):
 
     return ma_20, ma_50, ma_70, ma_150, ma_200, ma_200_20
 
+# minervini trend template
 def isTrendTemplateSimple(hist):
     close = hist["Close"].iloc[-1] # -1 is for the last value
 
@@ -299,7 +298,7 @@ def isTrendTemplateExponential(data, date_study):
     #sys.exit()
 
     #screened_data = data[is_trend_template_exp]
-    return is_trend_template_exp
+    return is_trend_template_exp.iloc[-1]
 
 def isTrendTemplate(data, hist, date_study, is_exponential):
     if not is_exponential:
@@ -348,13 +347,19 @@ def getKpiAtDay(symbol, date_study, b_check_trend_exponential):
     hist = hist.drop_duplicates()
     hist.reset_index(inplace=True) # Ensure Date is a column in the DataFrame
     
+    #print(hist)
+    #sys.exit()
+    
     rs_rating, comp_rating, eps = getFinancialRatings(hist, financials, balance_sheet, stock_info)
     is_trend_template = isTrendTemplate(data, hist, date_study, b_check_trend_exponential)
     is_vcp_pattern, is_vcp_breakout, price_increase, volume_increase = isVCP(hist)
 
     kpi_row = {
         "Date": date_study,
+        #"Open": hist["Open"].iloc[-1],
         "Close": hist["Close"].iloc[-1],
+        #"High": hist["High"].iloc[-1],
+        #"Low": hist["Low"].iloc[-1],
         "PriceIncrease": price_increase,
         "VolumeIncrease": volume_increase,
         "RS_Rating": rs_rating,
@@ -379,6 +384,83 @@ def getKpiAtPeriod(symbol, start_date, end_date, b_check_trend_exponential):
     
     kpi_results = pd.DataFrame(kpi_rows)
     return kpi_results
+
+def determineDowntrends(kpi_results, symbol):
+    kpi_rows = []
+    in_downtrend = False
+
+    prev_row = None
+    for index, row in kpi_results.iterrows():
+        if prev_row is None:
+            prev_row = row
+            continue
+        if not in_downtrend:
+            if row['Close'] < prev_row['Close']:
+                in_downtrend = True
+                start_date = prev_row['Date'] # peak
+                start_high = prev_row['Close']
+                start_index = index - 1
+        else:
+            if row['Close'] >= prev_row['Close'] * 1.35:
+                in_downtrend = False
+                end_index = index - 1
+                if end_index > start_index + 1: # ignore downtrend only 1 day
+                    end_date = prev_row['Date'] # trough
+                    end_low = prev_row['Close']
+                    kpi_row = {
+                        "Start_Date": start_date,
+                        "End_Date": end_date,
+                        "High": start_high,
+                        "Low": end_low,
+                        "Change[%]": 100 * abs((end_low - start_high) / start_high)
+                    }
+                    kpi_rows.append(kpi_row)
+        prev_row = row
+
+    downtrends = pd.DataFrame(kpi_rows)
+    downtrends['Start_Date'] = downtrends['Start_Date'].dt.tz_localize(None)
+    downtrends['End_Date'] = downtrends['End_Date'].dt.tz_localize(None)
+    printToExcel(symbol + "_Downtrends", downtrends)
+    return downtrends
+
+def determineLimitPriceBeforeBreakouts(kpi_results, buy_points, symbol):
+    rows = []
+    contraction_count = 0
+
+    prev_row = None
+    for index, row in buy_points.iterrows():
+        if prev_row is not None:
+            if row['High'] < prev_row['High'] and row['Low'] > prev_row['Low']: # TODO - is this mandatory
+                contraction_count = contraction_count + 1
+                if contraction_count >= 2:
+                    limit_price = row['High']
+                    # check if price of stock got to limit_price before the next downtrend
+                    kpi_start_index = kpi_results.index[kpi_results['Date'] == row['End_Date']].tolist() + 1
+                    kpi_end_index = kpi_results.index[kpi_results['Date'] == buy_points['Start_Date'].iloc[index+1]].tolist()
+                    for i in range(kpi_start_index, kpi_end_index + 1):
+                        if kpi_results['Open'].iloc[i] >= limit_price:
+                            row = {
+                                "Buy_Date": kpi_results['Date'].iloc[i],
+                                "Buy_Price": kpi_results['Open'].iloc[i]
+                            }
+                            rows.append(row)
+                        elif kpi_results['Close'].iloc[i] >= limit_price: # limit_price is between open and close that day
+                            row = {
+                                "Buy_Date": kpi_results['Date'].iloc[i],
+                                "Buy_Price": limit_price
+                            }
+                            rows.append(row)
+            else:
+                contraction_count = 0
+        prev_row = row
+
+    buy_points = pd.DataFrame(rows)
+    if buy_points.empty:
+        print(symbol + ": buy_points empty")
+    else:
+        buy_points['Buy_Date'] = buy_points['Buy_Date'].dt.tz_localize(None)
+        printToExcel(symbol + "_BuyPoints", buy_points)
+    return 
 
 # output: (getKpiAtPeriod) kpi_results + ["isBuyPoint"]
 def determineBuyPoints(kpi_results):
@@ -533,28 +615,35 @@ def main(stocklist, r, num_days_back, tz, b_check_trend_exponential):
     start_date = _today - timedelta(days=num_days_back+1) # +1 for isVcpPattern of oldest entry
     end_date = _today
 
-    #start_date = datetime.datetime(year=2024, month=1, day=18)
+    #start_date = datetime.datetime(year=2023, month=12, day=29)
 
     transactions = []
     for symbol in stocklist:
         kpi_results = getKpiAtPeriod(symbol, start_date, end_date, b_check_trend_exponential)
         kpi_results = determineBuyPoints(kpi_results)
         kpi_results = determineSellPoints(kpi_results, r)
+        
+        kpi_results['Date'] = kpi_results['Date'].dt.tz_localize(None)
         printToExcel(symbol, kpi_results)
+
+        contractions = determineDowntrends(kpi_results, symbol)
+        buy_points = determineLimitPriceBeforeBreakouts(kpi_results, contractions, symbol)
+        sys.exit()
 
         transactions.extend(addStockTransactions(symbol, kpi_results, r))
     
     transactions = pd.DataFrame(transactions)
+    transactions['Date'] = transactions['Date'].dt.tz_localize(None)
     printToExcel("zzTransactions", transactions)
 
     #summarizeStockActivity()
 
 # Define the stock list and date for the study
-stocklist = []
-#stocklist = ["AAPL","HEI","HIMS","WMT","ELAN","EMR","TRI","MKL","QTWO","TMDX","PINS","TGT","USFD","AMZN","META"]
+#stocklist = []
+stocklist = ["HIMS","AAPL","HEI","WMT","ELAN","EMR","TRI","MKL","QTWO","TMDX","PINS","TGT","USFD","AMZN","META"]
 r = 5/100
 num_days_back = 365
 tz = "Asia/Jerusalem"
-b_check_trend_exponential = True
+b_check_trend_exponential = False
 
 main(stocklist, r, num_days_back, tz, b_check_trend_exponential)
