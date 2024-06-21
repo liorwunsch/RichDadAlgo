@@ -1,4 +1,5 @@
 import sys
+import pickle
 import yfinance as yf
 import pandas as pd 
 import numpy as np
@@ -30,6 +31,14 @@ def createOutputFolder():
     except:
         print("CANNOT OPEN FOLDER: ", folder_name)
         return False
+    return True
+
+def createParamsFolder():
+    folder_name = "Params"
+    try:
+        os.makedirs(folder_name)
+    except:
+        pass
     return True
     
 # Save to Excel with the first row and first column frozen, adjusted column widths, and defined as a table
@@ -183,9 +192,9 @@ def calcCompRating(financials, balance_sheet, rs_rating):
 def getFinancialRatings(hist, financials, balance_sheet, stock_info):
     rs_rating = calcRsRating(hist)
     comp_rating = calcCompRating(financials, balance_sheet, rs_rating)
-    eps = calcEPS(financials, stock_info)
+    #eps = calcEPS(financials, stock_info)
 
-    return rs_rating, comp_rating, eps
+    return rs_rating, comp_rating#, eps
 
 def calcCurrentMovingAverages(data):
     sma = [20, 50, 70, 150, 200]
@@ -350,7 +359,7 @@ def getKpiAtDay(symbol, date_study, b_check_trend_exponential):
     #print(hist)
     #sys.exit()
     
-    rs_rating, comp_rating, eps = getFinancialRatings(hist, financials, balance_sheet, stock_info)
+    rs_rating, comp_rating = getFinancialRatings(hist, financials, balance_sheet, stock_info)
     is_trend_template = isTrendTemplate(data, hist, date_study, b_check_trend_exponential)
     is_vcp_pattern, is_vcp_breakout, price_increase, volume_increase = isVCP(hist)
 
@@ -364,7 +373,7 @@ def getKpiAtDay(symbol, date_study, b_check_trend_exponential):
         "VolumeIncrease": volume_increase,
         "RS_Rating": rs_rating,
         "Comp_Rating": comp_rating,
-        "EPS": eps,
+        #"EPS": eps,
         "isTrendTemplate": is_trend_template,
         "isVcpPattern": is_vcp_pattern,
         "isVcpBreakout": is_vcp_breakout
@@ -373,6 +382,13 @@ def getKpiAtDay(symbol, date_study, b_check_trend_exponential):
 
 # output: (getKpiAtDay) kpi_row(s)
 def getKpiAtPeriod(symbol, start_date, end_date, b_check_trend_exponential):
+    pickle_file_path = 'Params/' + symbol + '_kpi_results.pkl'
+    if os.path.exists(pickle_file_path):
+        with open(pickle_file_path, 'rb') as file:
+            kpi_results = pickle.load(file)
+            print("Loading " + pickle_file_path)
+            return kpi_results
+
     kpi_rows = []
     active_dates = determineActiveDates(symbol, start_date, end_date)
     
@@ -383,14 +399,34 @@ def getKpiAtPeriod(symbol, start_date, end_date, b_check_trend_exponential):
         kpi_rows.append(kpi_row)
     
     kpi_results = pd.DataFrame(kpi_rows)
+    kpi_results['Date'] = kpi_results['Date'].dt.tz_localize(None)
+
+    with open(pickle_file_path, 'wb') as file:
+        pickle.dump(kpi_results, file)
+    printToExcel(symbol, kpi_results)
     return kpi_results
 
-def determineDowntrends(kpi_results, symbol):
-    kpi_rows = []
+def determineDowntrends(symbol, start_date, end_date, is_weekly):
+    data = yf.Ticker(symbol)
+    hist = data.history(start=start_date, end=end_date+timedelta(days=1)) # +1 for data of today's afterhours and not yesterday's
+    hist = hist.drop_duplicates()
+    hist.reset_index(inplace=True) # Ensure Date is a column in the DataFrame
+
+    if is_weekly:
+        hist = hist.resample('W', on='Date').agg({
+            'Open': 'first',
+            'High': 'max',
+            'Low': 'min',
+            'Close': 'last',
+            'Volume': 'sum'
+        }).dropna().reset_index()
+    print(hist)
+
+    downtrend_rows = []
     in_downtrend = False
 
     prev_row = None
-    for index, row in kpi_results.iterrows():
+    for index, row in hist.iterrows():
         if prev_row is None:
             prev_row = row
             continue
@@ -398,30 +434,121 @@ def determineDowntrends(kpi_results, symbol):
             if row['Close'] < prev_row['Close']:
                 in_downtrend = True
                 start_date = prev_row['Date'] # peak
-                start_high = prev_row['Close']
+                start_close = prev_row['High']
                 start_index = index - 1
         else:
-            if row['Close'] >= prev_row['Close'] * 1.35:
+            if row['Close'] >= prev_row['Close']:
                 in_downtrend = False
                 end_index = index - 1
                 if end_index > start_index + 1: # ignore downtrend only 1 day
                     end_date = prev_row['Date'] # trough
-                    end_low = prev_row['Close']
-                    kpi_row = {
+                    end_close = prev_row['Low']
+                    downtrend_row = {
+                        "Index": len(downtrend_rows),
                         "Start_Date": start_date,
                         "End_Date": end_date,
-                        "High": start_high,
-                        "Low": end_low,
-                        "Change[%]": 100 * abs((end_low - start_high) / start_high)
+                        "High": start_close,
+                        "Low": end_close,
+                        "Change[%]": 100 * abs((end_close - start_close) / start_close)
                     }
-                    kpi_rows.append(kpi_row)
+                    downtrend_rows.append(downtrend_row)
         prev_row = row
 
-    downtrends = pd.DataFrame(kpi_rows)
-    downtrends['Start_Date'] = downtrends['Start_Date'].dt.tz_localize(None)
-    downtrends['End_Date'] = downtrends['End_Date'].dt.tz_localize(None)
-    printToExcel(symbol + "_Downtrends", downtrends)
+    downtrends = pd.DataFrame(downtrend_rows)
+    if not downtrends.empty:
+        downtrends['Start_Date'] = downtrends['Start_Date'].dt.tz_localize(None)
+        downtrends['End_Date'] = downtrends['End_Date'].dt.tz_localize(None)
+        printToExcel(symbol + "_Downtrends", downtrends)
     return downtrends
+
+def find_sequences(downtrends, index, current_sequence):
+    sequences = []
+    for i in range(index + 1, len(downtrends)):
+        if downtrends['Change[%]'].iloc[i] < downtrends['Change[%]'].iloc[i-1]:
+            if downtrends['High'].iloc[i] < downtrends['High'].iloc[i-1]:
+                if downtrends['Low'].iloc[i] > downtrends['Low'].iloc[i-1]:
+                    new_sequence = current_sequence + [i]
+                    sequences.append(new_sequence)
+                    sequences += find_sequences(downtrends, i, new_sequence)
+    return sequences
+
+def determineContractions(downtrends, symbol):
+    all_sequences = []
+    for i in range(len(downtrends)):
+        all_sequences += find_sequences(downtrends, i, [i])
+    filtered_sequences = [seq for seq in all_sequences if len(seq) > 2]
+
+    contraction_rows = []
+    for seq in filtered_sequences:
+        contraction_row = {
+            "Symbol": symbol,
+            "DowntrendIndexes": seq,
+            "End_Date": downtrends["End_Date"].iloc[seq[-1]]
+        }
+        contraction_rows.append(contraction_row)
+    return contraction_rows
+
+def dddd_determineContractions(downtrends, symbol, with_replace):
+    contraction_rows = []; downtrends_indexes = []
+    contraction_count = 1
+    prev_row = None
+    for index, row in downtrends.iterrows():
+        if prev_row is not None:
+            if row['Change[%]'] < prev_row['Change[%]']:
+                if contraction_count == 1:
+                    start_date = prev_row["Start_Date"]
+                    downtrends_indexes.append(index - 1)
+                contraction_count = contraction_count + 1
+                downtrends_indexes.append(index)
+            elif contraction_count > 1:
+                contraction_row = {
+                    "Symbol": symbol,
+                    "Contractions_Start": start_date,
+                    "Contractions_End": prev_row['End_Date'],
+                    "Contractions_Count": contraction_count,
+                    "DowntrendIndexes": downtrends_indexes,
+                    "Limit_Price": prev_row['High']
+                }
+                contraction_rows.append(contraction_row)
+                contraction_count = 1
+                downtrends_indexes = []
+        prev_row = row
+    return contraction_rows
+
+def determineVolatileContractions(downtrends, symbol, with_replace):
+    v_contraction_rows = []; downtrends_indexes = []
+    v_contraction_count = 1
+    v_contractions_end = False
+    prev_row = None
+    for index, row in downtrends.iterrows():
+        if prev_row is not None:
+            if row['Change[%]'] < prev_row['Change[%]']:
+                if row['High'] < prev_row['High'] and row['Low'] > prev_row['Low']:
+                    if v_contraction_count == 1:
+                        start_date = prev_row["Start_Date"]
+                        downtrends_indexes.append(index - 1)
+                    v_contraction_count = v_contraction_count + 1
+                    downtrends_indexes.append(index)
+                else:
+                    v_contractions_end = True
+            else:
+                v_contractions_end = True
+            if v_contractions_end:
+                if v_contraction_count > 1:
+                    v_contraction_row = {
+                        "Symbol": symbol,
+                        "vContractions_Start": start_date,
+                        "vContractions_End": prev_row['End_Date'],
+                        "vContractions_Count": v_contraction_count,
+                        "DowntrendIndexes": downtrends_indexes,
+                        "Limit_Price": prev_row['High']
+                    }
+                    v_contraction_rows.append(v_contraction_row)
+                v_contraction_count = 1
+                v_contractions_end = False
+                downtrends_indexes = []
+        prev_row = row
+    return v_contraction_rows
 
 def determineLimitPriceBeforeBreakouts(kpi_results, buy_points, symbol):
     rows = []
@@ -545,6 +672,19 @@ def determineSellPoints(kpi_results, r): # r(isk)
     return kpi_results
 
 def addStockTransactions(symbol, kpi_results, r): # r(isk)
+    #transactions = []
+    #viable_entries = kpi_results[(kpi_results["isVcpPattern"] & kpi_results["isVcpBreakout"])]
+    #for index in range(len(viable_entries)):
+    #    row = viable_entries.iloc[index]
+    #    transaction_row = {
+    #        "Symbol": symbol,
+    #        "Date": row["Date"],
+    #        "isVcpPattern": row["isVcpPattern"],
+    #        "isVcpBreakout": row["isVcpBreakout"]
+    #    }
+    #    transactions.append(transaction_row)
+    #return transactions
+
     transactions = []
     viable_entries = kpi_results[(kpi_results["isBuyPointActual"] | kpi_results["isSellPointWhole"] |
                                    kpi_results["isSellPointPartial1"] | kpi_results["isSellPointPartial2"])]
@@ -610,37 +750,50 @@ def main(stocklist, r, num_days_back, tz, b_check_trend_exponential):
         stocklist = readStockList()
     if not createOutputFolder():
         return
+    if not createParamsFolder():
+        return
 
     _today = getLastCloseDate(tz)
     start_date = _today - timedelta(days=num_days_back+1) # +1 for isVcpPattern of oldest entry
     end_date = _today
 
-    #start_date = datetime.datetime(year=2023, month=12, day=29)
+    #start_date = datetime.datetime(year=2024, month=2, day=1)
 
-    transactions = []
+    #transactions = []
+    contractions = []
+    weekly_contractions = []
     for symbol in stocklist:
-        kpi_results = getKpiAtPeriod(symbol, start_date, end_date, b_check_trend_exponential)
-        kpi_results = determineBuyPoints(kpi_results)
-        kpi_results = determineSellPoints(kpi_results, r)
-        
-        kpi_results['Date'] = kpi_results['Date'].dt.tz_localize(None)
-        printToExcel(symbol, kpi_results)
+        #kpi_results = getKpiAtPeriod(symbol, start_date, end_date, b_check_trend_exponential)
+        downtrends = determineDowntrends(symbol, start_date, end_date, False)
+        contractions.extend(determineContractions(downtrends, symbol))
+        weekly_downtrends = determineDowntrends(symbol, start_date, end_date, True)
+        weekly_contractions.extend(determineContractions(weekly_downtrends, symbol))
 
-        contractions = determineDowntrends(kpi_results, symbol)
-        buy_points = determineLimitPriceBeforeBreakouts(kpi_results, contractions, symbol)
-        sys.exit()
+        #v_contractions.extend(determineVolatileContractions(downtrends, symbol, True))
+        #buy_points = determineLimitPriceBeforeBreakouts(kpi_results, contractions, symbol)
+        #sys.exit()
+        #
+        #kpi_results = determineBuyPoints(kpi_results)
+        #kpi_results = determineSellPoints(kpi_results, r)
+        #
+        #kpi_results['Date'] = kpi_results['Date'].dt.tz_localize(None)
+        #printToExcel(symbol, kpi_results)
+        #transactions.extend(addStockTransactions(symbol, kpi_results, r))
+    contractions = pd.DataFrame(contractions)
+    weekly_contractions = pd.DataFrame(weekly_contractions)
 
-        transactions.extend(addStockTransactions(symbol, kpi_results, r))
-    
-    transactions = pd.DataFrame(transactions)
-    transactions['Date'] = transactions['Date'].dt.tz_localize(None)
-    printToExcel("zzTransactions", transactions)
+    printToExcel("zzContractions", contractions)
+    printToExcel("zzContractionsWeekly", weekly_contractions)
+
+    #transactions = pd.DataFrame(transactions)
+    #transactions['Date'] = transactions['Date'].dt.tz_localize(None)
+    #printToExcel("zzTransactions", transactions)
 
     #summarizeStockActivity()
 
 # Define the stock list and date for the study
 #stocklist = []
-stocklist = ["HIMS","AAPL","HEI","WMT","ELAN","EMR","TRI","MKL","QTWO","TMDX","PINS","TGT","USFD","AMZN","META"]
+stocklist = ["AAPL","HEI","HIMS","WMT","ELAN","EMR","TRI","MKL","QTWO","TMDX","PINS","TGT","USFD","AMZN","META"]
 r = 5/100
 num_days_back = 365
 tz = "Asia/Jerusalem"
