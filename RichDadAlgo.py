@@ -55,8 +55,7 @@ def createParamsFolder():
     except:
         pass
     return True
-    
-# Save to Excel with the first row and first column frozen, adjusted column widths, and defined as a table
+
 def printToExcel(file_name, results=pd.DataFrame()):
     if results.empty:
         print("printToExcel: " + file_name + "'s results is empty")
@@ -113,7 +112,6 @@ def getLastCloseDate(tz, ny_close_hour=16, ny_close_minute=0):
     #print(f"last_close_date = {_today}")
     return _today
 
-# Determine dates when the stock exchange was open so calculation won't have duplicates
 def determineActiveDates(symbol, start_date, end_date):
     data = yf.Ticker(symbol)
     hist = data.history(start=start_date, end=end_date+timedelta(days=1)) # +1 for data of today's afterhours and not yesterday's
@@ -220,6 +218,7 @@ def getKpiAtDay(hist, date_study):
     kpi_row = {
         "Date": date_study,
         "Close": hist["Close"].iloc[-1],
+        "High": hist["High"].iloc[-1],
         "isTrendTemplate": is_trend_template,
         "isVcpPattern": is_vcp_pattern,
         "isVcpPattern_Weekly": is_vcp_pattern_weekly,
@@ -256,17 +255,22 @@ def getKpiAtPeriod(symbol, start_date, end_date):
     grouped_kpi_rows = []
     for index, row in kpi_results.iterrows():
         if index == 0:
+            index_begin = index
             date_begin = row['Date']
+            price_begin = row['Close']
         else:
             if row['isTrendTemplate'] == prev_row['isTrendTemplate'] and \
                 row['isVcpPattern'] == prev_row['isVcpPattern'] and \
                 row['isVcpPattern_Weekly'] == prev_row['isVcpPattern_Weekly'] and \
                 row['isVcpPattern_Monthly'] == prev_row['isVcpPattern_Monthly']:
                 if index == kpi_results.index[-1]:
+                    index_end = index
                     date_end = row['Date']
                     grouped_kpi_row = {
                         "Date_Begin": date_begin,
                         "Date_End": date_end,
+                        "Price_Begin": price_begin,
+                        "Period_High": kpi_results['High'].iloc[index_begin:index_end+1].max(),
                         "isTrendTemplate": row['isTrendTemplate'],
                         "isVcpPattern": row['isVcpPattern'],
                         "isVcpPattern_Weekly": row['isVcpPattern_Weekly'],
@@ -274,22 +278,30 @@ def getKpiAtPeriod(symbol, start_date, end_date):
                     }
                     grouped_kpi_rows.append(grouped_kpi_row)
             else:
+                index_end = index - 1
                 date_end = prev_row['Date']
                 grouped_kpi_row = {
                     "Date_Begin": date_begin,
                     "Date_End": date_end,
+                    "Price_Begin": price_begin,
+                    "Period_High": kpi_results['High'].iloc[index_begin:index_end+1].max(),
                     "isTrendTemplate": prev_row['isTrendTemplate'],
                     "isVcpPattern": prev_row['isVcpPattern'],
                     "isVcpPattern_Weekly": prev_row['isVcpPattern_Weekly'],
                     "isVcpPattern_Monthly": prev_row['isVcpPattern_Monthly']
                 }
                 grouped_kpi_rows.append(grouped_kpi_row)
+                index_begin = index
                 date_begin = row['Date']
+                price_begin = row['Close']
                 if index == kpi_results.index[-1]:
+                    index_end = index
                     date_end = row['Date']
                     grouped_kpi_row = {
                         "Date_Begin": date_begin,
                         "Date_End": date_end,
+                        "Price_Begin": price_begin,
+                        "Period_High": kpi_results['High'].iloc[index_begin:index_end+1].max(),
                         "isTrendTemplate": row['isTrendTemplate'],
                         "isVcpPattern": row['isVcpPattern'],
                         "isVcpPattern_Weekly": row['isVcpPattern_Weekly'],
@@ -306,23 +318,28 @@ def getKpiAtPeriod(symbol, start_date, end_date):
     filtered_kpi_results = grouped_kpi_results.iloc[indexes]
 
     savePickle(kpi_results_path, kpi_results)
+    savePickle(filtered_kpi_results_path, filtered_kpi_results)
     printToExcel(symbol, grouped_kpi_results)
-    if not filtered_kpi_results.empty:
-        savePickle(filtered_kpi_results_path, filtered_kpi_results)
-        printToExcel(symbol + "_Filtered", filtered_kpi_results)
+    printToExcel(symbol + "_Filtered", filtered_kpi_results)
     return kpi_results, filtered_kpi_results
 
 def determineBuyPoints(kpi_results, filtered_kpi_results):
     prev_row = None
     buy_points = []
     for index, row in filtered_kpi_results.iterrows():
-        if prev_row is not None:
-            buy_points.append(row["Date_Begin"])
-        prev_row = row
+        price_date = row["Date_Begin"]
+        buy_limit_price = row["Period_High"]
+        date_index = kpi_results.index[kpi_results["Date"] >= price_date].tolist()
+        date_index = date_index[-1]
+        hist = kpi_results.iloc[date_index+1:]
+        hist = hist.copy()
+        limit_indexes = hist.index[hist['High'] > buy_limit_price].tolist()
+        if len(limit_indexes) != 0:
+            buy_points.append(hist['Date'].iloc[limit_indexes[0]])
+
     kpi_results["isBuyPoint"] = kpi_results["Date"].isin(buy_points)
     return kpi_results
 
-# For Buy and Sell points
 def addDatePriceEntries(kpi_results, date_price_entries, ispoint_col, price_col):
     # Initialize columns if not already present
     if ispoint_col not in kpi_results.columns:
@@ -446,14 +463,15 @@ def main(stocklist, r, num_days_back, tz):
         if not filtered_kpi_results.empty:
             kpi_results = determineBuyPoints(kpi_results, filtered_kpi_results)
             kpi_results = determineSellPoints(kpi_results, r)
-            transactions.extend(addStockTransactions(symbol, kpi_results, r))
+            symbol_transactions = addStockTransactions(symbol, kpi_results, r)
+            transactions.extend(symbol_transactions)
 
     transactions = pd.DataFrame(transactions)
-    transactions['Buy_Date'] = transactions['Buy_Date'].dt.tz_localize(None)
-    transactions['Sell_Date'] = transactions['Sell_Date'].dt.tz_localize(None)
-    printToExcel("zzTransactions", transactions)
+    if not transactions.empty:
+        transactions['Buy_Date'] = transactions['Buy_Date'].dt.tz_localize(None)
+        transactions['Sell_Date'] = transactions['Sell_Date'].dt.tz_localize(None)
+        printToExcel("zzTransactions", transactions)
 
-# Define the stock list and date for the study
 stocklist = ["AAPL","HEI","HIMS","WMT","ELAN","EMR","TRI","MKL","QTWO","TMDX","PINS","TGT","USFD","AMZN","META"] # []
 r = 5/100
 num_days_back = 365
