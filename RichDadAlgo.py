@@ -336,8 +336,7 @@ def getKpiAtPeriod(symbol, start_date, end_date):
     return kpi_results, filtered_kpi_results
 
 def determineBuyPoints(kpi_results, filtered_kpi_results):
-    kpi_results['isBuyPoint'] = False
-    kpi_results['LimitBuyingPrice'] = 0
+    kpi_results.loc[:, 'isBuyPoint'] = False
     for index, row in filtered_kpi_results.iterrows():
         buy_price_date = row['PeriodHigh_Date']
         buy_price_limit = row['PeriodHigh_Price']
@@ -348,8 +347,9 @@ def determineBuyPoints(kpi_results, filtered_kpi_results):
             limit_indexes = [x for x in limit_indexes if x >= date_index]
             if len(limit_indexes) != 0:
                 limit_index = limit_indexes[0]
-                kpi_results['isBuyPoint'].iloc[limit_index] = True
-                kpi_results['LimitBuyingPrice'].iloc[limit_index] = buy_price_limit
+                kpi_results.loc[limit_index, 'isBuyPoint'] = True
+                kpi_results.loc[limit_index, 'LimitPriceDate'] = buy_price_date
+                kpi_results.loc[limit_index, 'LimitBuyingPrice'] = buy_price_limit
     return kpi_results
 
 def addDatePriceEntries(kpi_results, date_price_entries, ispoint_col, price_col):
@@ -377,7 +377,7 @@ def determineSellPoints(kpi_results, r): # r(isk)
             if row['isBuyPoint']:
                 buy_price = row['LimitBuyingPrice']
                 actual_buy_points.append((date, buy_price))
-                
+
                 stop_price = buy_price * (1 - r) # Loss (-r)
                 limit_price = buy_price * (1 + 3*r) # Profit (3r)
 
@@ -473,7 +473,7 @@ def main(stocklist, r, num_days_back, tz):
 
     #start_date = datetime.datetime(year=2024, month=2, day=1)
 
-    transactions = []
+    transactions = pd.DataFrame()
     for symbol in stocklist:
         kpi_results, filtered_kpi_results = getKpiAtPeriod(symbol, start_date, end_date)
         printToExcel(symbol + "_kpi", kpi_results)
@@ -483,9 +483,11 @@ def main(stocklist, r, num_days_back, tz):
             printToExcel(symbol + "_kpi", kpi_results)
             symbol_transactions = addStockTransactions(symbol, kpi_results, r)
             printToExcel(symbol + "_transactions", symbol_transactions)
-            transactions.extend(symbol_transactions)
+            if transactions.empty:
+                transactions = symbol_transactions
+            else:
+                transactions = pd.concat([transactions, symbol_transactions], ignore_index=True)
 
-    transactions = pd.DataFrame(transactions)
     printToExcel("zzTransactions", transactions)
 
 stocklist = ["AAPL","HEI","HIMS","WMT","ELAN","EMR","TRI","MKL","QTWO","TMDX","PINS","TGT","USFD","AMZN","META"] # []
