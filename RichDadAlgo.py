@@ -235,7 +235,7 @@ def getKpiAtPeriod(symbol, start_date, end_date):
     success_3, grouped_kpi_results = loadPickle(grouped_kpi_results_path)
     if success_1 and success_2 and success_3:
         printToExcel(symbol, grouped_kpi_results)
-        printToExcel(symbol + "_Filtered", filtered_kpi_results)
+        #printToExcel(symbol + "_Filtered", filtered_kpi_results)
         return kpi_results, filtered_kpi_results
 
     data = yf.Ticker(symbol)
@@ -332,7 +332,7 @@ def getKpiAtPeriod(symbol, start_date, end_date):
     savePickle(filtered_kpi_results_path, filtered_kpi_results)
     savePickle(grouped_kpi_results_path, grouped_kpi_results)
     printToExcel(symbol, grouped_kpi_results)
-    printToExcel(symbol + "_Filtered", filtered_kpi_results)
+    #printToExcel(symbol + "_Filtered", filtered_kpi_results)
     return kpi_results, filtered_kpi_results
 
 def determineBuyPoints(kpi_results, filtered_kpi_results):
@@ -482,12 +482,21 @@ def main(stocklist, r, num_days_back, tz):
             kpi_results = determineSellPoints(kpi_results, r)
             printToExcel(symbol + "_kpi", kpi_results)
             symbol_transactions = addStockTransactions(symbol, kpi_results, r)
-            printToExcel(symbol + "_transactions", symbol_transactions)
+            #printToExcel(symbol + "_transactions", symbol_transactions)
             if transactions.empty:
                 transactions = symbol_transactions
             else:
                 transactions = pd.concat([transactions, symbol_transactions], ignore_index=True)
 
+    transactions_summary = pd.DataFrame({
+        "Symbol": 'Summary',
+        "Buy_Date": pd.NaT,
+        "Sell_Date": pd.NaT,
+        "Profit[%]": transactions["Profit[%]"].sum(),
+        "Profit_r": transactions["Profit_r"].sum(),
+        "Tax[%]": transactions["Tax[%]"].sum()
+    }, index=[0])
+    transactions = pd.concat([transactions, transactions_summary], ignore_index=True)
     printToExcel("zzTransactions", transactions)
 
 stocklist = ["AAPL","HEI","HIMS","WMT","ELAN","EMR","TRI","MKL","QTWO","TMDX","PINS","TGT","USFD","AMZN","META"] # []
