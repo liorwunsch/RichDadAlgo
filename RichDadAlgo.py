@@ -499,7 +499,8 @@ def main(stocklist, r, num_days_back, tz):
     transactions = pd.concat([transactions, transactions_summary], ignore_index=True)
     printToExcel("zzTransactions", transactions)
 
-stocklist = ["AAPL","HEI","HIMS","WMT","ELAN","EMR","TRI","MKL","QTWO","TMDX","PINS","TGT","USFD","AMZN","META"] # []
+stocklist = []
+#stocklist = ["AAPL","HEI","HIMS","WMT","ELAN","EMR","TRI","MKL","QTWO","TMDX","PINS","TGT","USFD","AMZN","META"]
 r = 5/100
 num_days_back = 365
 tz = "Asia/Jerusalem"
