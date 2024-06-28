@@ -62,13 +62,11 @@ def printToExcel(file_name, results=pd.DataFrame()):
         return
 
     output_filename = f"Output/{file_name}.xlsx"
-    with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
-        #if "Date" in results.columns:
-        #    results['Date'] = results['Date'].dt.tz_localize(None)
-        
+    with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:  
         results.to_excel(writer, index=False, sheet_name='results')
         worksheet = writer.sheets['results']
         worksheet.freeze_panes = 'B2'
+
         # Adjust column widths
         for col in worksheet.columns:
             max_length = 0
@@ -81,8 +79,10 @@ def printToExcel(file_name, results=pd.DataFrame()):
                     pass
             adjusted_width = max_length + 2  # Adding a little extra space
             worksheet.column_dimensions[column].width = adjusted_width
+
         # Define the table
         tab = Table(displayName="results", ref=f"A1:{get_column_letter(worksheet.max_column)}{worksheet.max_row}")
+
         # Add a default style with striped rows and banded columns
         style = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False, showLastColumn=False, showRowStripes=True, showColumnStripes=True)
         tab.tableStyleInfo = style
@@ -234,8 +234,8 @@ def getKpiAtPeriod(symbol, start_date, end_date):
     success_2, filtered_kpi_results = loadPickle(filtered_kpi_results_path)
     success_3, grouped_kpi_results = loadPickle(grouped_kpi_results_path)
     if success_1 and success_2 and success_3:
-        printToExcel(symbol, grouped_kpi_results)
-        #printToExcel(symbol + "_Filtered", filtered_kpi_results)
+        printToExcel(symbol + "_grouped", grouped_kpi_results)
+        printToExcel(symbol + "_filtered", filtered_kpi_results)
         return kpi_results, filtered_kpi_results
 
     data = yf.Ticker(symbol)
@@ -245,66 +245,53 @@ def getKpiAtPeriod(symbol, start_date, end_date):
 
     kpi_rows = []
     active_dates = determineActiveDates(symbol, start_date, end_date)
-    
-    for date_study in active_dates:
-        print(f"Processing {symbol} at {date_study} EST")
 
-        kpi_row = getKpiAtDay(hist, date_study)
-        kpi_rows.append(kpi_row)
-    
-    kpi_results = pd.DataFrame(kpi_rows)
-    kpi_results['Date'] = kpi_results['Date'].dt.tz_localize(None)
+    if len(active_dates) == 0 or (hist['Date'].iloc[0] > active_dates[0] - timedelta(days=365)):
+        kpi_results = pd.DataFrame()
+        grouped_kpi_results = pd.DataFrame()
+        filtered_kpi_results = pd.DataFrame()
+    else:
+        for date_study in active_dates:
+            print(f"Processing {symbol} at {date_study} EST")
 
-    prev_row = None
-    grouped_kpi_rows = []
-    for index, row in kpi_results.iterrows():
-        if index == 0:
-            index_begin = index
-            date_begin = row['Date']
-        else:
-            if row['isTrendTemplate'] == prev_row['isTrendTemplate'] and \
-                row['isVcpPattern'] == prev_row['isVcpPattern'] and \
-                row['isVcpPattern_Weekly'] == prev_row['isVcpPattern_Weekly'] and \
-                row['isVcpPattern_Monthly'] == prev_row['isVcpPattern_Monthly']:
-                if index == kpi_results.index[-1]:
-                    index_end = index
-                    date_end = row['Date']
-                    period_high_index = kpi_results['High'].iloc[index_begin:index_end+1].idxmax()
-                    period_high_date = kpi_results['Date'].iloc[period_high_index]
-                    period_high_price = kpi_results['High'].iloc[period_high_index]
-                    grouped_kpi_row = {
-                        "Date_Begin": date_begin,
-                        "Date_End": date_end,
-                        "PeriodHigh_Date": period_high_date,
-                        "PeriodHigh_Price": period_high_price,
-                        "isTrendTemplate": row['isTrendTemplate'],
-                        "isVcpPattern": row['isVcpPattern'],
-                        "isVcpPattern_Weekly": row['isVcpPattern_Weekly'],
-                        "isVcpPattern_Monthly": row['isVcpPattern_Monthly']
-                    }
-                    grouped_kpi_rows.append(grouped_kpi_row)
-            else:
-                index_end = index - 1
-                date_end = prev_row['Date']
-                period_high_index = kpi_results['High'].iloc[index_begin:index_end+1].idxmax()
-                period_high_date = kpi_results['Date'].iloc[period_high_index]
-                period_high_price = kpi_results['High'].iloc[period_high_index]
-                grouped_kpi_row = {
-                    "Date_Begin": date_begin,
-                    "Date_End": date_end,
-                    "PeriodHigh_Date": period_high_date,
-                    "PeriodHigh_Price": period_high_price,
-                    "isTrendTemplate": prev_row['isTrendTemplate'],
-                    "isVcpPattern": prev_row['isVcpPattern'],
-                    "isVcpPattern_Weekly": prev_row['isVcpPattern_Weekly'],
-                    "isVcpPattern_Monthly": prev_row['isVcpPattern_Monthly']
-                }
-                grouped_kpi_rows.append(grouped_kpi_row)
+            kpi_row = getKpiAtDay(hist, date_study)
+            kpi_rows.append(kpi_row)
+
+        kpi_results = pd.DataFrame(kpi_rows)
+        if not kpi_results.empty:
+            kpi_results['Date'] = kpi_results['Date'].dt.tz_localize(None)
+
+        prev_row = None
+        grouped_kpi_rows = []
+        for index, row in kpi_results.iterrows():
+            if index == 0:
                 index_begin = index
                 date_begin = row['Date']
-                if index == kpi_results.index[-1]:
-                    index_end = index
-                    date_end = row['Date']
+            else:
+                if row['isTrendTemplate'] == prev_row['isTrendTemplate'] and \
+                    row['isVcpPattern'] == prev_row['isVcpPattern'] and \
+                    row['isVcpPattern_Weekly'] == prev_row['isVcpPattern_Weekly'] and \
+                    row['isVcpPattern_Monthly'] == prev_row['isVcpPattern_Monthly']:
+                    if index == kpi_results.index[-1]:
+                        index_end = index
+                        date_end = row['Date']
+                        period_high_index = kpi_results['High'].iloc[index_begin:index_end+1].idxmax()
+                        period_high_date = kpi_results['Date'].iloc[period_high_index]
+                        period_high_price = kpi_results['High'].iloc[period_high_index]
+                        grouped_kpi_row = {
+                            "Date_Begin": date_begin,
+                            "Date_End": date_end,
+                            "PeriodHigh_Date": period_high_date,
+                            "PeriodHigh_Price": period_high_price,
+                            "isTrendTemplate": row['isTrendTemplate'],
+                            "isVcpPattern": row['isVcpPattern'],
+                            "isVcpPattern_Weekly": row['isVcpPattern_Weekly'],
+                            "isVcpPattern_Monthly": row['isVcpPattern_Monthly']
+                        }
+                        grouped_kpi_rows.append(grouped_kpi_row)
+                else:
+                    index_end = index - 1
+                    date_end = prev_row['Date']
                     period_high_index = kpi_results['High'].iloc[index_begin:index_end+1].idxmax()
                     period_high_date = kpi_results['Date'].iloc[period_high_index]
                     period_high_price = kpi_results['High'].iloc[period_high_index]
@@ -313,34 +300,56 @@ def getKpiAtPeriod(symbol, start_date, end_date):
                         "Date_End": date_end,
                         "PeriodHigh_Date": period_high_date,
                         "PeriodHigh_Price": period_high_price,
-                        "isTrendTemplate": row['isTrendTemplate'],
-                        "isVcpPattern": row['isVcpPattern'],
-                        "isVcpPattern_Weekly": row['isVcpPattern_Weekly'],
-                        "isVcpPattern_Monthly": row['isVcpPattern_Monthly']
+                        "isTrendTemplate": prev_row['isTrendTemplate'],
+                        "isVcpPattern": prev_row['isVcpPattern'],
+                        "isVcpPattern_Weekly": prev_row['isVcpPattern_Weekly'],
+                        "isVcpPattern_Monthly": prev_row['isVcpPattern_Monthly']
                     }
                     grouped_kpi_rows.append(grouped_kpi_row)
-        prev_row = row
-    grouped_kpi_results = pd.DataFrame(grouped_kpi_rows)
+                    index_begin = index
+                    date_begin = row['Date']
+                    if index == kpi_results.index[-1]:
+                        index_end = index
+                        date_end = row['Date']
+                        period_high_index = kpi_results['High'].iloc[index_begin:index_end+1].idxmax()
+                        period_high_date = kpi_results['Date'].iloc[period_high_index]
+                        period_high_price = kpi_results['High'].iloc[period_high_index]
+                        grouped_kpi_row = {
+                            "Date_Begin": date_begin,
+                            "Date_End": date_end,
+                            "PeriodHigh_Date": period_high_date,
+                            "PeriodHigh_Price": period_high_price,
+                            "isTrendTemplate": row['isTrendTemplate'],
+                            "isVcpPattern": row['isVcpPattern'],
+                            "isVcpPattern_Weekly": row['isVcpPattern_Weekly'],
+                            "isVcpPattern_Monthly": row['isVcpPattern_Monthly']
+                        }
+                        grouped_kpi_rows.append(grouped_kpi_row)
+            prev_row = row
 
-    indexes = grouped_kpi_results.index[grouped_kpi_results['isTrendTemplate'] & \
-                                    grouped_kpi_results['isVcpPattern'] & \
-                                    grouped_kpi_results['isVcpPattern_Weekly'] & \
-                                    grouped_kpi_results['isVcpPattern_Monthly']].tolist()
-    filtered_kpi_results = grouped_kpi_results.iloc[indexes]
+        grouped_kpi_results = pd.DataFrame(grouped_kpi_rows)
+        indexes = []
+        if not grouped_kpi_results.empty:
+            indexes = grouped_kpi_results.index[grouped_kpi_results['isTrendTemplate'] & \
+                                            grouped_kpi_results['isVcpPattern'] & \
+                                            grouped_kpi_results['isVcpPattern_Weekly'] & \
+                                            grouped_kpi_results['isVcpPattern_Monthly']].tolist()
+        filtered_kpi_results = grouped_kpi_results.iloc[indexes]
 
     savePickle(kpi_results_path, kpi_results)
     savePickle(filtered_kpi_results_path, filtered_kpi_results)
     savePickle(grouped_kpi_results_path, grouped_kpi_results)
-    printToExcel(symbol, grouped_kpi_results)
-    #printToExcel(symbol + "_Filtered", filtered_kpi_results)
+    printToExcel(symbol + "_grouped", grouped_kpi_results)
+    printToExcel(symbol + "_filtered", filtered_kpi_results)
     return kpi_results, filtered_kpi_results
 
 def determineBuyPoints(kpi_results, filtered_kpi_results):
     kpi_results.loc[:, 'isBuyPoint'] = False
     for index, row in filtered_kpi_results.iterrows():
+        date_end = row['Date_End']
         buy_price_date = row['PeriodHigh_Date']
         buy_price_limit = row['PeriodHigh_Price']
-        date_indexes = kpi_results.index[kpi_results['Date'] > buy_price_date].tolist()
+        date_indexes = kpi_results.index[kpi_results['Date'] > date_end].tolist() # buy after consolidation period
         if len(date_indexes) != 0:
             date_index = date_indexes[0]
             limit_indexes = kpi_results.index[kpi_results['High'] > buy_price_limit].tolist()
@@ -421,6 +430,7 @@ def addStockTransactions(symbol, kpi_results, r): # r(isk)
         row = viable_entries.iloc[index]
         if row["isBuyPointActual"]:
             buy_price = row["BuyPrice"]
+            limit_price_date = row["LimitPriceDate"]
             buy_date = row["Date"]
 
             sell_price = -1
@@ -445,6 +455,7 @@ def addStockTransactions(symbol, kpi_results, r): # r(isk)
 
                 transaction_row = {
                     "Symbol": symbol,
+                    "LimitPriceDate": limit_price_date,
                     "Buy_Date": buy_date,
                     "Sell_Date": sell_date,
                     "Profit[%]": profit_percent * 100,
@@ -467,7 +478,8 @@ def main(stocklist, r, num_days_back, tz):
     if not createParamsFolder():
         return
 
-    _today = getLastCloseDate(tz)
+    #_today = getLastCloseDate(tz)
+    _today = datetime.datetime(year=2024, month=6, day=25) # TODO
     start_date = _today - timedelta(days=num_days_back+1) # +1 for isVcpPattern of oldest entry
     end_date = _today
 
@@ -482,7 +494,7 @@ def main(stocklist, r, num_days_back, tz):
             kpi_results = determineSellPoints(kpi_results, r)
             printToExcel(symbol + "_kpi", kpi_results)
             symbol_transactions = addStockTransactions(symbol, kpi_results, r)
-            #printToExcel(symbol + "_transactions", symbol_transactions)
+            printToExcel(symbol + "_transactions", symbol_transactions)
             if transactions.empty:
                 transactions = symbol_transactions
             else:
@@ -490,6 +502,7 @@ def main(stocklist, r, num_days_back, tz):
 
     transactions_summary = pd.DataFrame({
         "Symbol": 'Summary',
+        "LimitPriceDate": pd.NaT,
         "Buy_Date": pd.NaT,
         "Sell_Date": pd.NaT,
         "Profit[%]": transactions["Profit[%]"].sum(),
