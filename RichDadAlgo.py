@@ -349,7 +349,7 @@ def determineBuyPoints(kpi_results, filtered_kpi_results):
         date_end = row['Date_End']
         buy_price_date = row['PeriodHigh_Date']
         buy_price_limit = row['PeriodHigh_Price']
-        date_indexes = kpi_results.index[kpi_results['Date'] > date_end].tolist() # buy after consolidation period
+        date_indexes = kpi_results.index[kpi_results['Date'] > buy_price_date].tolist()
         if len(date_indexes) != 0:
             date_index = date_indexes[0]
             limit_indexes = kpi_results.index[kpi_results['High'] > buy_price_limit].tolist()
